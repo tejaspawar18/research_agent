@@ -1,0 +1,7 @@
+.env
+/venv
+/storage
+*__pycache__*
+/data
+/paper
+sd_debug

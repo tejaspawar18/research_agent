@@ -1,0 +1,14 @@
+playwright
+requests
+beautifulsoup4
+lxml
+boto3
+python-dotenv
+scylla-driver
+openai
+qdrant-client
+tqdm
+tenacity
+pydantic
+pyyaml
+feedparser
