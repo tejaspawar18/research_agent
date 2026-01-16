@@ -90,25 +90,27 @@ def get_list_page_articles(source):
     article_selector = selectors.get("article_link")
     
     results = []
-    pw = None
     
     try:
-        # Use Playwright for JS-rendered pages
-        pw = PlaywrightClient()
-        page, _ = pw.goto(url, timeout=30000)
+        # Use loop-safe helper to get HTML
+        from core.playwright_client import get_html_universal
+        from bs4 import BeautifulSoup
         
-        # Wait for content to load
-        page.wait_for_timeout(2000)
-        
+        html = get_html_universal(url)
+        if not html:
+            logger.warning(f"No HTML returned for {source['name']}")
+            return []
+            
+        soup = BeautifulSoup(html, "lxml")
         links = []
         
         # Try custom selector first
         if article_selector:
             try:
-                elements = page.query_selector_all(article_selector)
+                elements = soup.select(article_selector)
                 for el in elements:
-                    href = el.get_attribute("href")
-                    title = el.inner_text() if el else None
+                    href = el.get("href")
+                    title = el.get_text() if el else None
                     if href:
                         links.append((href, title))
                 logger.info(f"Found {len(links)} links via selector '{article_selector}'")
@@ -117,11 +119,11 @@ def get_list_page_articles(source):
         
         # Fallback: get all anchor tags and filter
         if not links:
-            all_anchors = page.query_selector_all("a")
+            all_anchors = soup.find_all("a")
             for anchor in all_anchors:
                 try:
-                    href = anchor.get_attribute("href")
-                    title = anchor.inner_text()
+                    href = anchor.get("href")
+                    title = anchor.get_text()
                     if href:
                         links.append((href, title))
                 except:
@@ -163,9 +165,6 @@ def get_list_page_articles(source):
         
     except Exception as e:
         logger.error(f"List page scrape failed for {source['name']}: {e}")
-    finally:
-        if pw:
-            pw.close()
     
     return results
 

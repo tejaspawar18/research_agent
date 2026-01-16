@@ -7,6 +7,10 @@ from openai import OpenAI
 from core.logger import get_logger
 from processing.models import PaperSummary
 
+from dotenv import load_dotenv
+
+load_dotenv()
+
 logger = get_logger("summarizer")
 
 client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
@@ -50,6 +54,7 @@ def _save_content(text: str, source_type: str = "html", title: str = None) -> st
     logger.info(f"Saved raw content → {filepath}")
     return filepath
 
+
 def _save_summary(summary: dict, source_type: str = "html") -> str:
     """Save the summarized content as JSON."""
     _ensure_dirs()
@@ -67,6 +72,8 @@ You are a biomedical research analyst.
 Generate a STRICT JSON object with the following keys:
 
 title
+doi
+published_date
 authors
 abstract
 objective
@@ -79,8 +86,12 @@ limitations
 future_scope
 final_summary
 
+
 Rules:
-- Final summary must be ≤ 400 words.
+- Final summary must be ≤ 600 words.
+- dont change the abstract, title and authors.
+- also dont change the doi.
+- return the exact published date
 - If a field is missing in the paper, put null.
 - Do NOT include any text outside the JSON.
 """
@@ -123,33 +134,56 @@ def _extract_message_content(resp):
 
     return None
 
-def summarize_pdf(file_path: str) -> dict:
+from pypdf import PdfReader
+
+# ... (omitted existing imports/code)
+
+def summarize_pdf(file_path: str, title: str, doi: str, published_date: str) -> dict:
     """
     Summarize PDF using GPT-4o-mini with strict JSON output.
+    Extracts text locally using pypdf.
     Saves the summary to data/summaries/.
     """
     logger.info(f"Summarizing PDF → {file_path}")
 
-    # Upload file to OpenAI (use context manager to avoid resource leak)
-    with open(file_path, "rb") as f:
-        upload = client.files.create(
-            purpose="assistants",
-            file=f
-        )
 
-    response = client.chat.completions.create(
-        model="gpt-4o-mini",
-        messages=[
-            {"role": "user",
-             "content": [
-                 {"type": "input_file", "file_id": upload.id},
-                 {"type": "text", "text": SUMMARY_RULES}
-             ]
-             }
-        ]
-    )
+    # Extract text from PDF
+    text_content = ""
+    try:
+        reader = PdfReader(file_path)
+        for page in reader.pages:
+            extract = page.extract_text()
+            if extract:
+                text_content += extract + "\n"
+    except Exception as e:
+        logger.error(f"Failed to extract text from PDF {file_path}: {e}")
+        return None
+
+    if not text_content.strip():
+        logger.error(f"No text extracted from PDF {file_path}")
+        return None
+
+    # Save raw content (optional, but good for debugging/record)
+    _save_content(text_content, source_type="pdf", title=os.path.basename(file_path))
+
+    # Send text to OpenAI (same approach as summarize_html)
+    try:
+        response = client.chat.completions.create(
+            model="gpt-4o-mini",
+            messages=[
+                {"role": "user",
+                 "content": text_content + "\n\n" + SUMMARY_RULES
+                 }
+            ],
+            response_format={"type": "json_object"}
+        )
+    except Exception as e:
+        logger.error(f"OpenAI API call failed: {e}")
+        return None
+
 
     raw = _extract_message_content(response)
+    tokens = response.usage
     if raw is None:
         logger.error("Could not extract content from OpenAI response.")
         return None
@@ -161,14 +195,31 @@ def summarize_pdf(file_path: str) -> dict:
         data = json.loads(raw)
         validated = PaperSummary(**data)
         result = validated.dict()
+        if title:
+            result["title"] = title
+        if doi:
+            result["doi"] = doi
+        if published_date:
+            result["published_date"] = published_date
+
         
+        # Inject token usage if available
+        if tokens:
+            result["input_token"] = tokens.prompt_tokens
+            result["output_token"] = tokens.completion_tokens
+
         # Save the summary
         _save_summary(result, source_type="pdf")
         
         return result
     except Exception as e:
         logger.error(f"JSON parsing failed: {e}")
-        logger.error(f"Raw output was:\n{raw}")
+        # Save failed raw output for debugging
+        debug_path = f"data/debug/failed_summary_{datetime.now().strftime('%Y%m%d_%H%M%S')}.txt"
+        os.makedirs("data/debug", exist_ok=True)
+        with open(debug_path, "w", encoding="utf-8") as f:
+            f.write(raw)
+        logger.error(f"Raw output saved to {debug_path}")
         return None
 
 
@@ -197,10 +248,12 @@ def summarize_html(html_data: dict) -> dict:
         model="gpt-4o-mini",
         messages=[
             {"role": "user", "content": text + "\n\n" + SUMMARY_RULES}
-        ]
+        ],
+        response_format={"type": "json_object"}
     )
 
     raw = _extract_message_content(response)
+    tokens = response.usage
     if raw is None:
         logger.error("Could not extract content from OpenAI response (HTML).")
         return None
@@ -212,6 +265,11 @@ def summarize_html(html_data: dict) -> dict:
         data = json.loads(raw)
         validated = PaperSummary(**data)
         result = validated.dict()
+        
+        # Inject token usage if available
+        if tokens:
+            result["input_token"] = tokens.prompt_tokens
+            result["output_token"] = tokens.completion_tokens
         
         # Save the summary
         _save_summary(result, source_type="html")

@@ -2,6 +2,7 @@ import hashlib
 import os
 from datetime import datetime
 import uuid
+import re
 
 def generate_uuid():
     return str(uuid.uuid4())
@@ -20,3 +21,13 @@ def today_path():
 def ensure_dir(path):
     os.makedirs(path, exist_ok=True)
     return path
+
+def sanitize_filename(name):
+    """
+    Sanitize a string to be safe for use as a filename.
+    """
+    # Remove invalid characters
+    name = re.sub(r'[<>:"/\\|?*]', '', name)
+    # Replace whitespace with underscores
+    name = name.replace(' ', '_')
+    return name.strip()

@@ -25,7 +25,22 @@ def get_rss_articles(source):
             "source": source["name"],
             "title": entry.get("title"),
             "published": parse_rss_time(entry),
-            "selectors": source.get("selectors", {})
+            "selectors": source.get("selectors", {}),
+            "doi": entry.get("doi", None),
+            "authors": entry.get("authors", []),
         })
 
     return results
+if __name__=="__main__":
+    import yaml
+    with open("config/sources.yaml", "r") as f:
+        sources = yaml.safe_load(f).get("sources", [])
+        for source in sources:
+            if source.get("fetch_method") != "rss":
+                continue
+            res = get_rss_articles(source)
+            print(len(res))
+            print(res[0]) if len(res) > 0 else None 
+            print("\n")
+        
+

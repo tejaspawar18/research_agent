@@ -23,6 +23,7 @@ from processing.embedding_generator import embed_text
 from processing.taxonomy_classifier import classify_topics
 from storage.write_scylla import write_paper, write_embedding_meta
 from storage.qdrant_client import send_embedding
+from core.slack_notifier import send_article_notification
 
 logger = get_logger("article_worker")
 
@@ -45,10 +46,14 @@ def process_article(item, scylla_session=None):
         # 1. Try to download PDF
         pdf_result = download_pdf(url, selectors=selectors, outdir="data/temp")
         pdf_path = pdf_result.get("pdf_path") if isinstance(pdf_result, dict) else pdf_result
+        title = pdf_result.get("title")
+        doi = pdf_result.get("doi")
+        published_date = pdf_result.get("published_date")
         
         local_pdf = None
         s3_url = None
 
+        summary = {}
         # 2. If pdf found -> save local and upload s3
         if pdf_path and isinstance(pdf_path, str) and os.path.exists(pdf_path):
             local_pdf = save_local_pdf(pdf_path)
@@ -56,7 +61,7 @@ def process_article(item, scylla_session=None):
             key_prefix = f"papers/{source}"
             s3_url = upload_s3(local_pdf, key_prefix)
             # Summarize PDF
-            summary = summarize_pdf(local_pdf)
+            summary = summarize_pdf(local_pdf, title, doi, published_date)
         else:
             # Fallback: extract HTML and summarize
             html_data = extract_html_content(url)
@@ -72,13 +77,14 @@ def process_article(item, scylla_session=None):
             s3_url = upload_s3(local_pdf, f"papers/{source}")
 
         if not summary:
-            raise RuntimeError("Summarizer returned no valid summary")
+            logger.warning("Summarizer returned no valid summary, using empty dict.")
+            summary = {}
 
         # 3. Prepare metadata and store in Scylla
         paper_id = str(uuid.uuid4())
         extra = {
             "source": source,
-            "published_date": item.get("published"),
+            "published_date": summary.get("published_date") or item.get("published_date"),
             "journal": summary.get("journal") or None
         }
 
@@ -88,15 +94,18 @@ def process_article(item, scylla_session=None):
         # 4. Embeddings
         # emb_text = summary.get("final_summary") or summary.get("key_findings") or summary.get("abstract") or ""
         # embedding = embed_text(emb_text)
-        # topics = classify_topics(emb_text)
-        # # send embedding to Qdrant ingest
-        # qresp = send_embedding(paper_id, embedding, {
-        #     "title": summary.get("title"),
-        #     "source": source,
-        #     "topics": topics
-        # })
-        # # store embedding meta
-        # write_embedding_meta(scylla_session, paper_id, qresp.get("vector_id") if isinstance(qresp, dict) else None, topics)
+        
+        # 5. Notify Slack
+        notify_data = {
+            "title": summary.get("title") or item.get("title") or title,
+            "url": url,
+            "journal": summary.get("journal") or source,
+            "published_date": item.get("published_date"),
+            "doi": doi,
+            "source": source
+        }
+        summary_text = summary.get("final_summary") or summary.get("abstract") or "No summary available."
+        send_article_notification(notify_data, summary_text)
 
         return {"status": "ok", "paper_id": paper_id}
     except Exception as e:

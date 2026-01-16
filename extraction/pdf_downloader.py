@@ -9,8 +9,44 @@ from bs4 import BeautifulSoup
 from core.logger import get_logger
 from core.http_client import download, get as http_get
 from core.playwright_client import PlaywrightClient
-from core.utils import generate_uuid, ensure_dir
-from extraction.doi_resolver import resolve_pdf_from_doi
+from core.utils import generate_uuid, ensure_dir, sanitize_filename
+from core.unpaywall_client import UnpaywallClient, resolve_oa
+
+def _try_unpaywall(doi, outdir):
+    try:
+        client = UnpaywallClient()
+        data = client.get(doi)
+        oa_info = resolve_oa(data)
+
+        if oa_info and oa_info.get("pdf_url"):
+            pdf_url = oa_info.get("pdf_url")
+            title = oa_info.get("title")
+            
+            if title:
+                safe_title = sanitize_filename(title)
+                if len(safe_title) > 150:
+                    safe_title = safe_title[:150]
+                filename = f"{safe_title}.pdf"
+            else:
+                filename = f"{generate_uuid()}.pdf"
+
+            file_path = os.path.join(outdir, filename)
+            
+            # Using imported download function (core.http_client)
+            # We need to make sure download is available in this scope? Yes globally imported.
+            download(pdf_url, file_path)
+            
+            return {
+                "pdf_path": file_path,
+                "title": title,
+                "doi": doi,
+                "published_date": oa_info.get("published_date"),
+                "note": "unpaywall"
+            }
+    except Exception as e:
+        logger.debug(f"Unpaywall attempt failed for {doi}: {e}")
+    return None
+
 
 logger = get_logger("pdf_downloader")
 
@@ -116,6 +152,10 @@ def download_pdf(article_url, selectors=None, outdir="data/temp", headless=True)
         doi = _extract_doi_from_html_text(html)
         if doi:
             result["doi"] = doi
+            # Prioritize Unpaywall if DOI is found
+            up_result = _try_unpaywall(doi, outdir)
+            if up_result:
+                return up_result
 
         pdf_link = _find_pdf_link_in_html(html, article_url)
         if pdf_link:
@@ -272,25 +312,26 @@ def download_pdf(article_url, selectors=None, outdir="data/temp", headless=True)
 
         doi = result.get("doi")
         if doi:
-            pdf_url = resolve_pdf_from_doi(doi)
-            if pdf_url:
-                file_path = os.path.join(outdir, f"{generate_uuid()}.pdf")
-                download(pdf_url, file_path)
-                result["pdf_path"] = file_path
-                result["note"] = "unpaywall"
-                return result
-            else:
-                # try Crossref to fetch abstract/title if available
-                try:
-                    meta = _crossref_metadata(doi)
-                    if meta:
-                        result["fallback_abstract"] = meta.get("abstract")
-                        result["note"] = "crossref_no_pdf"
-                        return result
-                except Exception:
-                    pass
-    except Exception:
-        pass
+            # Retry Unpaywall (if not already successful)
+            # Actually if we are here, it means Unpaywall passed in Step 2 failed or we didn't have DOI then.
+            # But if we have DOI now, we can try.
+            # However, if we already tried in Step 2, this is a retry.
+            up_result = _try_unpaywall(doi, outdir)
+            if up_result:
+                return up_result
+
+            # try Crossref to fetch abstract/title if available
+            try:
+                meta = _crossref_metadata(doi)
+                if meta:
+                    result["fallback_abstract"] = meta.get("abstract")
+                    result["note"] = "crossref_no_pdf"
+                    return result
+            except Exception:
+                pass
+    except Exception as e:
+        logger.debug(f"DOI/Unpaywall fallback step failed: {e}")
+
 
     result["note"] = result.get("note") or "no_pdf_found"
     logger.warning(f"No PDF found for: {article_url} (note={result['note']}, doi={result.get('doi')})")
@@ -314,3 +355,12 @@ def _crossref_metadata(doi):
         logger.debug(f"Crossref call failed: {e}")
         return None
 
+
+def download_pdf_from_url(pdf_url, out_path):
+    headers = {"User-Agent": "research-agent/1.0"}
+    r = requests.get(pdf_url, stream=True, timeout=30)
+    r.raise_for_status()
+
+    with open(out_path, "wb") as f:
+        for chunk in r.iter_content(8192):
+            f.write(chunk)

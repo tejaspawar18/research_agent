@@ -39,6 +39,7 @@ sources:
     selectors:
       pdf_button: "a[data-track-action='download pdf']"
 
+  # TODO: Check this source
   - name: eurjmedres
     type: journal
     fetch_method: rss
@@ -132,89 +133,89 @@ sources:
       pdf_button: "a.show-pdf"
 
   # ============================================
-  # SCIENCEDIRECT SEARCHES
+  # SCIENCEDIRECT SEARCHES (SKIPPED DUE TO AGGRESSIVE BLOCKING)
   # ============================================
 
-  - name: sciencedirect_atherosclerosis
-    type: journal
-    fetch_method: list_page
-    url: "https://www.sciencedirect.com/search?qs=atherosclerosis&years=2026%2C2025%2C2024&articleTypes=FLA&subjectAreas=2700%2C3000&accessTypes=openaccess"
-    pdf_strategy: playwright
-    selectors:
-      article_link: "a.result-list-title-link"
-      pdf_button: "a:has-text('PDF')"
+  # - name: sciencedirect_atherosclerosis
+  #   type: journal
+  #   fetch_method: list_page
+  #   url: "https://www.sciencedirect.com/search?qs=atherosclerosis&years=2026%2C2025%2C2024&articleTypes=FLA&subjectAreas=2700%2C3000&accessTypes=openaccess"
+  #   pdf_strategy: playwright
+  #   selectors:
+  #     article_link: "a.result-list-title-link"
+  #     pdf_button: "a:has-text('PDF')"
 
-  - name: sciencedirect_diabetes
-    type: journal
-    fetch_method: list_page
-    url: "https://www.sciencedirect.com/search?qs=Type+2+Diabetes&years=2026%2C2025&articleTypes=FLA%2CCRP&subjectAreas=2700%2C3000&langs=en&accessTypes=openaccess"
-    pdf_strategy: playwright
-    selectors:
-      article_link: "a.result-list-title-link"
+  # - name: sciencedirect_diabetes
+  #   type: journal
+  #   fetch_method: list_page
+  #   url: "https://www.sciencedirect.com/search?qs=Type+2+Diabetes&years=2026%2C2025&articleTypes=FLA%2CCRP&subjectAreas=2700%2C3000&langs=en&accessTypes=openaccess"
+  #   pdf_strategy: playwright
+  #   selectors:
+  #     article_link: "a.result-list-title-link"
 
-  - name: sciencedirect_fatty_liver
-    type: journal
-    fetch_method: list_page
-    url: "https://www.sciencedirect.com/search?qs=fatty+liver&years=2026%2C2025&articleTypes=FLA&langs=en&subjectAreas=2700%2C3000&accessTypes=openaccess"
-    pdf_strategy: playwright
-    selectors:
-      article_link: "a.result-list-title-link"
+  # - name: sciencedirect_fatty_liver
+  #   type: journal
+  #   fetch_method: list_page
+  #   url: "https://www.sciencedirect.com/search?qs=fatty+liver&years=2026%2C2025&articleTypes=FLA&langs=en&subjectAreas=2700%2C3000&accessTypes=openaccess"
+  #   pdf_strategy: playwright
+  #   selectors:
+  #     article_link: "a.result-list-title-link"
 
-  - name: sciencedirect_cancers
-    type: journal
-    fetch_method: list_page
-    url: "https://www.sciencedirect.com/search?qs=cancers&years=2026%2C2025&articleTypes=FLA%2CCRP&subjectAreas=2700%2C3000&langs=en&accessTypes=openaccess"
-    pdf_strategy: playwright
-    selectors:
-      article_link: "a.result-list-title-link"
+  # - name: sciencedirect_cancers
+  #   type: journal
+  #   fetch_method: list_page
+  #   url: "https://www.sciencedirect.com/search?qs=cancers&years=2026%2C2025&articleTypes=FLA%2CCRP&subjectAreas=2700%2C3000&langs=en&accessTypes=openaccess"
+  #   pdf_strategy: playwright
+  #   selectors:
+  #     article_link: "a.result-list-title-link"
 
-  - name: sciencedirect_musculoskeletal
-    type: journal
-    fetch_method: list_page
-    url: "https://www.sciencedirect.com/search?qs=Musculoskeletal+diseases&years=2026%2C2025&articleTypes=FLA&subjectAreas=2700%2C3000&langs=en&accessTypes=openaccess"
-    pdf_strategy: playwright
-    selectors:
-      article_link: "a.result-list-title-link"
+  # - name: sciencedirect_musculoskeletal
+  #   type: journal
+  #   fetch_method: list_page
+  #   url: "https://www.sciencedirect.com/search?qs=Musculoskeletal+diseases&years=2026%2C2025&articleTypes=FLA&subjectAreas=2700%2C3000&langs=en&accessTypes=openaccess"
+  #   pdf_strategy: playwright
+  #   selectors:
+  #     article_link: "a.result-list-title-link"
 
-  - name: sciencedirect_blood_pressure
-    type: journal
-    fetch_method: list_page
-    url: "https://www.sciencedirect.com/search?qs=Blood+pressure&articleTypes=FLA&years=2026%2C2025&langs=en&accessTypes=openaccess&subjectAreas=2700%2C3000"
-    pdf_strategy: playwright
-    selectors:
-      article_link: "a.result-list-title-link"
+  # - name: sciencedirect_blood_pressure
+  #   type: journal
+  #   fetch_method: list_page
+  #   url: "https://www.sciencedirect.com/search?qs=Blood+pressure&articleTypes=FLA&years=2026%2C2025&langs=en&accessTypes=openaccess&subjectAreas=2700%2C3000"
+  #   pdf_strategy: playwright
+  #   selectors:
+  #     article_link: "a.result-list-title-link"
 
-  - name: sciencedirect_neurodegenerative
-    type: journal
-    fetch_method: list_page
-    url: "https://www.sciencedirect.com/search?qs=neurodegenerative+disease&years=2026%2C2025&accessTypes=openaccess&langs=en&articleTypes=FLA"
-    pdf_strategy: playwright
-    selectors:
-      article_link: "a.result-list-title-link"
+  # - name: sciencedirect_neurodegenerative
+  #   type: journal
+  #   fetch_method: list_page
+  #   url: "https://www.sciencedirect.com/search?qs=neurodegenerative+disease&years=2026%2C2025&accessTypes=openaccess&langs=en&articleTypes=FLA"
+  #   pdf_strategy: playwright
+  #   selectors:
+  #     article_link: "a.result-list-title-link"
 
-  - name: sciencedirect_mental_health
-    type: journal
-    fetch_method: list_page
-    url: "https://www.sciencedirect.com/search?qs=mental+health&years=2026%2C2025&articleTypes=FLA&subjectAreas=2700%2C2900&langs=en&accessTypes=openaccess"
-    pdf_strategy: playwright
-    selectors:
-      article_link: "a.result-list-title-link"
+  # - name: sciencedirect_mental_health
+  #   type: journal
+  #   fetch_method: list_page
+  #   url: "https://www.sciencedirect.com/search?qs=mental+health&years=2026%2C2025&articleTypes=FLA&subjectAreas=2700%2C2900&langs=en&accessTypes=openaccess"
+  #   pdf_strategy: playwright
+  #   selectors:
+  #     article_link: "a.result-list-title-link"
 
-  - name: sciencedirect_liver
-    type: journal
-    fetch_method: list_page
-    url: "https://www.sciencedirect.com/search?qs=liver&years=2026%2C2025&articleTypes=FLA%2CCRP&subjectAreas=2700%2C3000&langs=en&accessTypes=openaccess"
-    pdf_strategy: playwright
-    selectors:
-      article_link: "a.result-list-title-link"
+  # - name: sciencedirect_liver
+  #   type: journal
+  #   fetch_method: list_page
+  #   url: "https://www.sciencedirect.com/search?qs=liver&years=2026%2C2025&articleTypes=FLA%2CCRP&subjectAreas=2700%2C3000&langs=en&accessTypes=openaccess"
+  #   pdf_strategy: playwright
+  #   selectors:
+  #     article_link: "a.result-list-title-link"
 
-  - name: sciencedirect_kidney
-    type: journal
-    fetch_method: list_page
-    url: "https://www.sciencedirect.com/search?qs=kidney&years=2026%2C2025&articleTypes=CRP%2CFLA&subjectAreas=3000%2C2700&accessTypes=openaccess&langs=en"
-    pdf_strategy: playwright
-    selectors:
-      article_link: "a.result-list-title-link"
+  # - name: sciencedirect_kidney
+  #   type: journal
+  #   fetch_method: list_page
+  #   url: "https://www.sciencedirect.com/search?qs=kidney&years=2026%2C2025&articleTypes=CRP%2CFLA&subjectAreas=3000%2C2700&accessTypes=openaccess&langs=en"
+  #   pdf_strategy: playwright
+  #   selectors:
+  #     article_link: "a.result-list-title-link"
 
   # ============================================
   # PUBMED SEARCHES
@@ -223,7 +224,7 @@ sources:
   - name: pubmed_atherosclerosis
     type: government
     fetch_method: list_page
-    url: "https://pmc.ncbi.nlm.nih.gov/search/?term=%22atherosclerosis%22+%5BMeSH+Terms%5D&sort=date&filter=datesearch.y_1&filter=pubstate.published_article&filter=collections.open_access"
+    url: "https://pmc.ncbi.nlm.nih.gov/search/?term=%22atherosclerosis%22%20%5BMeSH%20Terms%5D&sort=date&filter=datesearch.y_1&filter=pubstate.published_article&filter=collections.open_access"
     pdf_strategy: direct
     selectors:
       article_link: "a.title"
@@ -231,7 +232,7 @@ sources:
   - name: pubmed_insulin
     type: government
     fetch_method: list_page
-    url: "https://pmc.ncbi.nlm.nih.gov/search/?term=%22insulin%22+%5BMeSH+Terms%5D&sort=date&filter=datesearch.y_1&filter=pubstate.published_article&filter=collections.open_access"
+    url: "https://pmc.ncbi.nlm.nih.gov/search/?term=%22insulin%22%20%5BMeSH%20Terms%5D&sort=date&filter=datesearch.y_1&filter=pubstate.published_article&filter=collections.open_access"
     pdf_strategy: direct
     selectors:
       article_link: "a.title"
@@ -239,7 +240,7 @@ sources:
   - name: pubmed_liver
     type: government
     fetch_method: list_page
-    url: "https://pmc.ncbi.nlm.nih.gov/search/?term=%22liver%22+%5BMeSH+Terms%5D&sort=date&filter=datesearch.y_1&filter=pubstate.published_article&filter=collections.open_access"
+    url: "https://pmc.ncbi.nlm.nih.gov/search/?term=%22liver%22%20%5BMeSH%20Terms%5D&sort=date&filter=datesearch.y_1&filter=pubstate.published_article&filter=collections.open_access"
     pdf_strategy: direct
     selectors:
       article_link: "a.title"
@@ -247,7 +248,7 @@ sources:
   - name: pubmed_kidney
     type: government
     fetch_method: list_page
-    url: "https://pmc.ncbi.nlm.nih.gov/search/?term=%22kidney%22+%5BMeSH+Terms%5D&sort=date&filter=datesearch.y_1&filter=pubstate.published_article&filter=collections.open_access"
+    url: "https://pmc.ncbi.nlm.nih.gov/search/?term=%22kidney%22%20%5BMeSH%20Terms%5D&sort=date&filter=datesearch.y_1&filter=pubstate.published_article&filter=collections.open_access"
     pdf_strategy: direct
     selectors:
       article_link: "a.title"
@@ -255,7 +256,7 @@ sources:
   - name: pubmed_osteoporosis
     type: government
     fetch_method: list_page
-    url: "https://pmc.ncbi.nlm.nih.gov/search/?term=%22osteoporosis%22+%5BMeSH+Terms%5D&sort=date&filter=datesearch.y_1&filter=pubstate.published_article&filter=collections.open_access"
+    url: "https://pmc.ncbi.nlm.nih.gov/search/?term=%22osteoporosis%22%20%5BMeSH%20Terms%5D&sort=date&filter=datesearch.y_1&filter=pubstate.published_article&filter=collections.open_access"
     pdf_strategy: direct
     selectors:
       article_link: "a.title"
@@ -263,7 +264,7 @@ sources:
   - name: pubmed_bone_density
     type: government
     fetch_method: list_page
-    url: "https://pmc.ncbi.nlm.nih.gov/search/?term=%22bone+density%22+%5BMeSH+Terms%5D&sort=date&filter=datesearch.y_1&filter=pubstate.published_article&filter=collections.open_access"
+    url: "https://pmc.ncbi.nlm.nih.gov/search/?term=%22bone%20density%22%20%5BMeSH%20Terms%5D&sort=date&filter=datesearch.y_1&filter=pubstate.published_article&filter=collections.open_access"
     pdf_strategy: direct
     selectors:
       article_link: "a.title"
@@ -271,7 +272,7 @@ sources:
   - name: pubmed_mental_health
     type: government
     fetch_method: list_page
-    url: "https://pmc.ncbi.nlm.nih.gov/search/?term=%22mental+health%22+%5BMeSH+Terms%5D&sort=date&filter=datesearch.y_1&filter=pubstate.published_article&filter=collections.open_access"
+    url: "https://pmc.ncbi.nlm.nih.gov/search/?term=%22mental%20health%22%20%5BMeSH%20Terms%5D&sort=date&filter=datesearch.y_1&filter=pubstate.published_article&filter=collections.open_access"
     pdf_strategy: direct
     selectors:
       article_link: "a.title"
@@ -279,7 +280,7 @@ sources:
   - name: pubmed_immune_system
     type: government
     fetch_method: list_page
-    url: "https://pmc.ncbi.nlm.nih.gov/search/?term=%22immune+system%22+%5BMeSH+Terms%5D&sort=date&filter=datesearch.y_1&filter=pubstate.published_article&filter=collections.open_access"
+    url: "https://pmc.ncbi.nlm.nih.gov/search/?term=%22immune%20system%22%20%5BMeSH%20Terms%5D&sort=date&filter=datesearch.y_1&filter=pubstate.published_article&filter=collections.open_access"
     pdf_strategy: direct
     selectors:
       article_link: "a.title"
@@ -287,7 +288,7 @@ sources:
   - name: pubmed_anxiety
     type: government
     fetch_method: list_page
-    url: "https://pmc.ncbi.nlm.nih.gov/search/?term=%22anxiety%22+%5BMeSH+Terms%5D&sort=date&filter=datesearch.y_1&filter=pubstate.published_article&filter=collections.open_access"
+    url: "https://pmc.ncbi.nlm.nih.gov/search/?term=%22anxiety%22%20%5BMeSH%20Terms%5D&sort=date&filter=datesearch.y_1&filter=pubstate.published_article&filter=collections.open_access"
     pdf_strategy: direct
     selectors:
       article_link: "a.title"
@@ -295,7 +296,7 @@ sources:
   - name: pubmed_vitamins
     type: government
     fetch_method: list_page
-    url: "https://pmc.ncbi.nlm.nih.gov/search/?term=%22vitamins%22+%5BMeSH+Terms%5D&sort=date&filter=datesearch.y_1&filter=pubstate.published_article&filter=collections.open_access"
+    url: "https://pmc.ncbi.nlm.nih.gov/search/?term=%22vitamins%22%20%5BMeSH%20Terms%5D&sort=date&filter=datesearch.y_1&filter=pubstate.published_article&filter=collections.open_access"
     pdf_strategy: direct
     selectors:
       article_link: "a.title"
@@ -303,7 +304,7 @@ sources:
   - name: pubmed_sleep
     type: government
     fetch_method: list_page
-    url: "https://pmc.ncbi.nlm.nih.gov/search/?term=%22sleep%22+%5BMeSH+Terms%5D&sort=date&filter=datesearch.y_1&filter=pubstate.published_article&filter=collections.open_access"
+    url: "https://pmc.ncbi.nlm.nih.gov/search/?term=%22sleep%22%20%5BMeSH%20Terms%5D&sort=date&filter=datesearch.y_1&filter=pubstate.published_article&filter=collections.open_access"
     pdf_strategy: direct
     selectors:
       article_link: "a.title"
@@ -311,7 +312,31 @@ sources:
   - name: pubmed_air_pollution
     type: government
     fetch_method: list_page
-    url: "https://pmc.ncbi.nlm.nih.gov/search/?term=%22air+pollution%22+%5BMeSH+Terms%5D&sort=date&filter=datesearch.y_1&filter=pubstate.published_article&filter=collections.open_access"
+    url: "https://pmc.ncbi.nlm.nih.gov/search/?term=%22air%20pollution%22%20%5BMeSH%20Terms%5D&sort=date&filter=datesearch.y_1&filter=pubstate.published_article&filter=collections.open_access"
+    pdf_strategy: direct
+    selectors:
+      article_link: "a.title"
+
+  - name: pubmed_fats
+    type: government
+    fetch_method: list_page
+    url: "https://pmc.ncbi.nlm.nih.gov/search/?term=%22fats%22%20%5BMeSH%20Terms%5D&sort=date&filter=datesearch.y_1&filter=pubstate.published_article&filter=collections.open_access"
+    pdf_strategy: direct
+    selectors:
+      article_link: "a.title"
+
+  - name: pubmed_diarrhea
+    type: government
+    fetch_method: list_page
+    url: "https://pmc.ncbi.nlm.nih.gov/search/?term=%22diarrhea%22%20%5BMeSH%20Terms%5D&sort=date&filter=datesearch.y_1&filter=pubstate.published_article&filter=collections.open_access"
+    pdf_strategy: direct
+    selectors:
+      article_link: "a.title"
+
+  - name: pubmed_water_pollution
+    type: government
+    fetch_method: list_page
+    url: "https://pmc.ncbi.nlm.nih.gov/search/?term=%22water%20pollution%22%20%5BMeSH%20Terms%5D&sort=date&filter=datesearch.y_1&filter=pubstate.published_article&filter=collections.open_access"
     pdf_strategy: direct
     selectors:
       article_link: "a.title"
@@ -330,11 +355,10 @@ sources:
 
   - name: cdc
     type: institution
-    fetch_method: list_page
-    url: "https://www.cdc.gov/media/"
+    fetch_method: rss
+    rss: "http://www2c.cdc.gov/podcasts/feed.asp?feedid=183"
     pdf_strategy: none
-    selectors:
-      article_link: "a.card__link"
+    selectors: {}
 
   - name: ecdc
     type: institution
@@ -406,11 +430,10 @@ sources:
 
   - name: mit_science
     type: university
-    fetch_method: list_page
-    url: "https://news.mit.edu/school/science"
+    fetch_method: rss
+    rss: "https://news.mit.edu/rss/school/science"
     pdf_strategy: none
-    selectors:
-      article_link: "a.term-page--news-article--item--title--link"
+    selectors: {}
 
   - name: stanford_medicine
     type: university
@@ -426,19 +449,17 @@ sources:
 
   - name: american_heart_assoc
     type: news
-    fetch_method: list_page
-    url: "https://www.heart.org/en/around-the-aha"
+    fetch_method: rss
+    rss: "https://newsroom.heart.org/rss.xml"
     pdf_strategy: none
-    selectors:
-      article_link: "a.card-title"
+    selectors: {}
 
   - name: peter_attia
     type: expert
-    fetch_method: list_page
-    url: "https://peterattiamd.com/category/weekly-newsletter/"
+    fetch_method: rss
+    rss: "https://peterattiamd.com/feed/"
     pdf_strategy: none
-    selectors:
-      article_link: "a.entry-title-link"
+    selectors: {}
 
   - name: obesity_energetics
     type: research

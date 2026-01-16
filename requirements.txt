@@ -12,3 +12,6 @@ tenacity
 pydantic
 pyyaml
 feedparser
+cloudscraper
+fake-useragent
+playwright-stealth
