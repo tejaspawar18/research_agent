@@ -1,0 +1,119 @@
+# Government & Institutional Sources
+sources:
+  # NIH
+  - source_id: nih_news
+    name: "National Institutes of Health"
+    url: "https://www.nih.gov/news-events/news-releases"
+    source_type: government
+    quality_tier: high
+    crawl_method: rss
+    rate_limit: 5
+    enabled: true
+    rss_url: "https://www.nih.gov/news-events/news-releases/feed"
+
+  # CDC
+  - source_id: cdc_media
+    name: "Centers for Disease Control and Prevention"
+    url: "https://www.cdc.gov/media/"
+    source_type: government
+    quality_tier: high
+    crawl_method: rss
+    rate_limit: 5
+    enabled: true
+    rss_url: "https://tools.cdc.gov/podcasts/feed.asp?feedid=183"
+
+  # ECDC
+  - source_id: ecdc
+    name: "European Centre for Disease Prevention and Control"
+    url: "https://www.ecdc.europa.eu/en/search?s=&f%5B0%5D=categories%3A1307"
+    source_type: government
+    quality_tier: high
+    crawl_method: rss
+    rate_limit: 5
+    enabled: true
+    rss_url: "https://www.ecdc.europa.eu/en/rss.xml"
+
+  # PIB India
+  - source_id: pib_india
+    name: "Press Information Bureau - India"
+    url: "https://www.pib.gov.in/indexd.aspx"
+    source_type: government
+    quality_tier: high
+    crawl_method: rss
+    rate_limit: 5
+    enabled: true
+    rss_url: "https://pib.gov.in/RssMain.aspx?ModId=6&Lang=1&Regid=3"
+
+  # American Heart Association
+  - source_id: aha_news
+    name: "American Heart Association"
+    url: "https://www.heart.org/en/around-the-aha"
+    source_type: organization
+    quality_tier: medium
+    crawl_method: html_scrape
+    rate_limit: 5
+    enabled: true
+    css_selectors:
+      article_list: ".news-card"
+      title: ".card-title"
+      link: "a"
+      date: ".date"# Government & Institutional Sources
+sources:
+  # NIH
+  - source_id: nih_news
+    name: "National Institutes of Health"
+    url: "https://www.nih.gov/news-events/news-releases"
+    source_type: government
+    quality_tier: high
+    crawl_method: rss
+    rate_limit: 5
+    enabled: true
+    rss_url: "https://www.nih.gov/news-events/news-releases/feed"
+
+  # CDC
+  - source_id: cdc_media
+    name: "Centers for Disease Control and Prevention"
+    url: "https://www.cdc.gov/media/"
+    source_type: government
+    quality_tier: high
+    crawl_method: rss
+    rate_limit: 5
+    enabled: true
+    rss_url: "https://tools.cdc.gov/podcasts/feed.asp?feedid=183"
+
+  # ECDC
+  - source_id: ecdc
+    name: "European Centre for Disease Prevention and Control"
+    url: "https://www.ecdc.europa.eu/en/search?s=&f%5B0%5D=categories%3A1307"
+    source_type: government
+    quality_tier: high
+    crawl_method: rss
+    rate_limit: 5
+    enabled: true
+    rss_url: "https://www.ecdc.europa.eu/en/rss.xml"
+
+  # PIB India
+  - source_id: pib_india
+    name: "Press Information Bureau - India"
+    url: "https://www.pib.gov.in/indexd.aspx"
+    source_type: government
+    quality_tier: high
+    crawl_method: rss
+    rate_limit: 5
+    enabled: true
+    rss_url: "https://pib.gov.in/RssMain.aspx?ModId=6&Lang=1&Regid=3"
+
+  # American Heart Association
+  - source_id: aha_news
+    name: "American Heart Association"
+    url: "https://www.heart.org/en/around-the-aha"
+    source_type: organization
+    quality_tier: medium
+    crawl_method: html_scrape
+    rate_limit: 5
+    enabled: true
+    css_selectors:
+      article_list: ".news-card"
+      title: ".card-title"
+      link: "a"
+      date: ".date"

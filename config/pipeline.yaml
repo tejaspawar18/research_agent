@@ -1,0 +1,17 @@
+# Pipeline Configuration
+
+# Schedule (cron: minute hour day month day_of_week)
+schedule: "0 6 * * *"  # 6 AM daily
+
+# Processing limits
+max_articles_per_run: 500
+max_articles_per_source: 50
+relevance_threshold: 60.0
+
+# Parallelization
+parallel_crawlers: 5
+
+# Quality thresholds
+dedup_similarity_threshold: 0.85
+min_sample_size_observational: 150
+min_sample_size_rct: 50

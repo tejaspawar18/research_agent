@@ -1,0 +1,86 @@
+# Academic Institutions & Expert Sources
+sources:
+  # Harvard
+  - source_id: harvard_medicine
+    name: "Harvard Medicine Magazine"
+    url: "https://magazine.hms.harvard.edu/articles"
+    source_type: academic
+    quality_tier: medium
+    crawl_method: html_scrape
+    rate_limit: 5
+    enabled: true
+    css_selectors:
+      article_list: ".views-row"
+      title: "h2 a, h3 a"
+      link: "h2 a, h3 a"
+      date: ".date"
+
+  # Yale Medicine
+  - source_id: yale_medicine_research
+    name: "Yale Medicine - Research"
+    url: "https://www.yalemedicine.org/search/news?tagId=1"
+    source_type: academic
+    quality_tier: medium
+    crawl_method: html_scrape
+    rate_limit: 5
+    enabled: true
+
+  - source_id: yale_medicine_clinical
+    name: "Yale Medicine - Clinical"
+    url: "https://www.yalemedicine.org/search/news?tagId=2"
+    source_type: academic
+    quality_tier: medium
+    crawl_method: html_scrape
+    rate_limit: 5
+    enabled: true
+
+  - source_id: yale_medicine_cancer
+    name: "Yale Medicine - Cancer Answers"
+    url: "https://www.yalemedicine.org/news/category/cancer-answers"
+    source_type: academic
+    quality_tier: medium
+    crawl_method: html_scrape
+    rate_limit: 5
+    enabled: true
+
+  - source_id: yale_medicine_conditions
+    name: "Yale Medicine - Conditions"
+    url: "https://www.yalemedicine.org/search/news?tagId=4"
+    source_type: academic
+    quality_tier: medium
+    crawl_method: html_scrape
+    rate_limit: 5
+    enabled: true
+
+  # MIT
+  - source_id: mit_science
+    name: "MIT News - School of Science"
+    url: "https://news.mit.edu/school/science"
+    source_type: academic
+    quality_tier: medium
+    crawl_method: rss
+    rate_limit: 5
+    enabled: true
+    rss_url: "https://news.mit.edu/rss/topic/science"
+
+  # Stanford
+  - source_id: stanford_medicine
+    name: "Stanford Medicine News"
+    url: "https://med.stanford.edu/news.html"
+    source_type: academic
+    quality_tier: medium
+    crawl_method: rss
+    rate_limit: 5
+    enabled: true
+    rss_url: "https://med.stanford.edu/news.xml"
+
+  # Peter Attia - Expert Blog
+  - source_id: peter_attia
+    name: "Peter Attia MD - Newsletter"
+    url: "https://peterattiamd.com/category/weekly-newsletter/"
+    source_type: expert_blog
+    quality_tier: medium
+    crawl_method: rss
+    rate_limit: 5
+    enabled: true
+    rss_url: "https://peterattiamd.com/feed/"

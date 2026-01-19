@@ -1,0 +1,325 @@
+"""
+Orchestrator Service - Pipeline coordination and scheduling.
+"""
+import logging
+import asyncio
+from contextlib import asynccontextmanager
+from typing import List, Dict, Any, Optional
+from datetime import datetime, date
+import json
+
+from fastapi import FastAPI, HTTPException, BackgroundTasks
+from pydantic import BaseModel
+import httpx
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.cron import CronTrigger
+
+import sys
+sys.path.insert(0, '/app')
+
+from shared.models import Article, PipelineRun, ArticleStatus, ProjectArea
+from shared.utils import ScyllaDBManager, RedisManager, initialize_schema
+from shared.config import config
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+db_manager = ScyllaDBManager()
+redis_manager = RedisManager()
+scheduler = AsyncIOScheduler()
+
+CRAWLER_URL = "http://crawler:8001"
+DEDUP_URL = "http://dedup:8002"
+LLM_URL = "http://llm:8004"
+NOTIFICATION_URL = "http://notification:8005"
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    db_manager.connect()
+    initialize_schema(db_manager)
+    await redis_manager.connect()
+    config.load()
+    setup_scheduler()
+    scheduler.start()
+    logger.info("Orchestrator service started")
+    yield
+    scheduler.shutdown()
+    db_manager.disconnect()
+    await redis_manager.disconnect()
+
+
+app = FastAPI(title="Orchestrator Service", version="1.0.0", lifespan=lifespan)
+
+
+class PipelineRequest(BaseModel):
+    source_ids: Optional[List[str]] = None
+    skip_crawl: bool = False
+    skip_llm: bool = False
+    skip_notify: bool = False
+
+
+class PipelineResponse(BaseModel):
+    run_id: str
+    status: str
+    message: str
+
+
+class PipelineOrchestrator:
+    def __init__(self):
+        self._runs: Dict[str, PipelineRun] = {}
+        self._current: Optional[PipelineRun] = None
+    
+    async def run_pipeline(
+        self,
+        source_ids: Optional[List[str]] = None,
+        skip_crawl: bool = False,
+        skip_llm: bool = False,
+        skip_notify: bool = False,
+    ) -> PipelineRun:
+        run = PipelineRun()
+        self._runs[run.run_id] = run
+        self._current = run
+        
+        logger.info(f"Starting pipeline run {run.run_id}")
+        
+        try:
+            # Step 1: Crawl
+            articles = []
+            if not skip_crawl:
+                run.status = "crawling"
+                articles = await self._crawl(source_ids)
+                run.articles_crawled = len(articles)
+                logger.info(f"Crawled {len(articles)} articles")
+            else:
+                articles = await self._load_from_queue("articles:crawled")
+                run.articles_crawled = len(articles)
+            
+            # Step 2: Deduplicate
+            run.status = "deduplicating"
+            unique_articles = await self._deduplicate(articles)
+            run.articles_deduplicated = len(unique_articles)
+            logger.info(f"Deduplicated to {len(unique_articles)} articles")
+            
+            # Step 3: LLM Processing
+            processed_articles = []
+            if not skip_llm and unique_articles:
+                run.status = "processing"
+                processed_articles = await self._llm_process(unique_articles)
+                run.articles_filtered = len(processed_articles)
+                run.articles_summarized = len([a for a in processed_articles if a.summary])
+                logger.info(f"Processed {len(processed_articles)} articles")
+            else:
+                processed_articles = unique_articles
+            
+            # Step 4: Store in ScyllaDB
+            run.status = "storing"
+            for article in processed_articles:
+                try:
+                    db_manager.insert_article(article.model_dump())
+                except Exception as e:
+                    logger.warning(f"Failed to store article: {e}")
+            
+            # Step 5: Notify
+            if not skip_notify and processed_articles:
+                run.status = "notifying"
+                notified = await self._notify(processed_articles)
+                run.articles_notified = notified
+                logger.info(f"Notified {notified} articles")
+            
+            run.status = "completed"
+            run.completed_at = datetime.utcnow()
+            logger.info(f"Pipeline {run.run_id} completed successfully")
+            
+        except Exception as e:
+            logger.error(f"Pipeline failed: {e}")
+            run.status = "failed"
+            run.errors.append(str(e))
+        
+        finally:
+            self._current = None
+            self._runs[run.run_id] = run
+            db_manager.insert_pipeline_run(run.model_dump())
+        
+        return run
+    
+    async def _crawl(self, source_ids: Optional[List[str]]) -> List[Article]:
+        try:
+            async with httpx.AsyncClient(timeout=300.0) as client:
+                response = await client.post(
+                    f"{CRAWLER_URL}/crawl/trigger",
+                    json={"source_ids": source_ids, "max_articles_per_source": 50}
+                )
+                response.raise_for_status()
+                job = response.json()
+                
+                # Wait for completion
+                for _ in range(120):
+                    await asyncio.sleep(5)
+                    status_resp = await client.get(f"{CRAWLER_URL}/crawl/status/{job['job_id']}")
+                    status = status_resp.json()
+                    if status["status"] in ["completed", "failed"]:
+                        break
+                
+                return await self._load_from_queue("articles:crawled")
+        except Exception as e:
+            logger.error(f"Crawl failed: {e}")
+            return []
+    
+    async def _deduplicate(self, articles: List[Article]) -> List[Article]:
+        if not articles:
+            return []
+        
+        try:
+            async with httpx.AsyncClient(timeout=120.0) as client:
+                response = await client.post(
+                    f"{DEDUP_URL}/dedup/batch",
+                    json={"articles": [a.model_dump() for a in articles]}
+                )
+                response.raise_for_status()
+                result = response.json()
+                
+                unique = []
+                for article, dedup_result in zip(articles, result["results"]):
+                    if not dedup_result["is_duplicate"]:
+                        unique.append(article)
+                
+                return unique
+        except Exception as e:
+            logger.error(f"Dedup failed: {e}")
+            return articles
+    
+    async def _llm_process(self, articles: List[Article]) -> List[Article]:
+        processed = []
+        
+        try:
+            async with httpx.AsyncClient(timeout=600.0) as client:
+                response = await client.post(
+                    f"{LLM_URL}/llm/process-batch",
+                    json={"articles": [a.model_dump() for a in articles]}
+                )
+                response.raise_for_status()
+                result = response.json()
+                
+                for article, proc_result in zip(articles, result["results"]):
+                    if proc_result.get("status") == "processed":
+                        article.project_area = proc_result.get("project_area")
+                        article.sub_topic = proc_result.get("sub_topic")
+                        article.summary = proc_result.get("summary")
+                        article.key_findings = proc_result.get("key_findings", [])
+                        article.evidence_level = proc_result.get("evidence_level")
+                        article.study_type = proc_result.get("study_type")
+                        article.relevance_score = proc_result.get("relevance_score")
+                        article.status = ArticleStatus.PROCESSED
+                        processed.append(article)
+                
+                return processed
+        except Exception as e:
+            logger.error(f"LLM processing failed: {e}")
+            return articles
+    
+    async def _notify(self, articles: List[Article]) -> int:
+        # Group by project area
+        by_area: Dict[str, List[Article]] = {}
+        for article in articles:
+            area = article.project_area or "general"
+            if area not in by_area:
+                by_area[area] = []
+            by_area[area].append(article)
+        
+        notified = 0
+        
+        try:
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                for area, area_articles in by_area.items():
+                    channel = config.slack.channels.get(area, "#research-general")
+                    
+                    response = await client.post(
+                        f"{NOTIFICATION_URL}/notify/digest",
+                        json={
+                            "articles": [a.model_dump() for a in area_articles[:10]],
+                            "project_area": area,
+                            "channel": channel,
+                        }
+                    )
+                    
+                    if response.status_code == 200:
+                        result = response.json()
+                        if result.get("success"):
+                            notified += len(area_articles[:10])
+        except Exception as e:
+            logger.error(f"Notification failed: {e}")
+        
+        return notified
+    
+    async def _load_from_queue(self, queue_name: str) -> List[Article]:
+        articles = []
+        while True:
+            data = await redis_manager.pop_queue(queue_name, timeout=1)
+            if not data:
+                break
+            try:
+                article = Article.model_validate_json(data)
+                articles.append(article)
+            except Exception as e:
+                logger.warning(f"Failed to parse article: {e}")
+        return articles
+    
+    def get_run(self, run_id: str) -> Optional[PipelineRun]:
+        return self._runs.get(run_id)
+    
+    def get_current(self) -> Optional[PipelineRun]:
+        return self._current
+
+
+orchestrator = PipelineOrchestrator()
+
+
+def setup_scheduler():
+    schedule = config.pipeline.schedule
+    try:
+        parts = schedule.split()
+        trigger = CronTrigger(minute=parts[0], hour=parts[1], day=parts[2], month=parts[3], day_of_week=parts[4])
+        scheduler.add_job(scheduled_run, trigger, id="daily_pipeline", replace_existing=True)
+        logger.info(f"Scheduled pipeline: {schedule}")
+    except Exception as e:
+        logger.error(f"Scheduler setup failed: {e}")
+
+
+async def scheduled_run():
+    logger.info("Starting scheduled pipeline run")
+    await orchestrator.run_pipeline()
+
+
+@app.post("/pipeline/run", response_model=PipelineResponse)
+async def trigger_pipeline(request: PipelineRequest, background_tasks: BackgroundTasks):
+    if orchestrator.get_current():
+        raise HTTPException(status_code=409, detail="Pipeline already running")
+    
+    background_tasks.add_task(
+        orchestrator.run_pipeline,
+        request.source_ids, request.skip_crawl, request.skip_llm, request.skip_notify
+    )
+    
+    return PipelineResponse(run_id="pending", status="started", message="Pipeline initiated")
+
+
+@app.get("/pipeline/status")
+async def get_status():
+    run = orchestrator.get_current()
+    if not run:
+        return {"status": "idle", "message": "No pipeline running"}
+    return run.model_dump()
+
+
+@app.get("/pipeline/status/{run_id}")
+async def get_run_status(run_id: str):
+    run = orchestrator.get_run(run_id)
+    if not run:
+        raise HTTPException(status_code=404, detail="Run not found")
+    return run.model_dump()
+
+
+@app.get("/health")
+async def health():
+    return {"status": "healthy", "service": "orchestrator", "scheduler": scheduler.running}

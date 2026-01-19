@@ -1,0 +1,212 @@
+version: '3.8'
+
+services:
+  # ===================
+  # Core Services
+  # ===================
+  
+  crawler:
+    build:
+      context: .
+      dockerfile: services/crawler/Dockerfile
+    container_name: health-crawler
+    environment:
+      - REDIS_URL=redis://redis:6379
+      - PUBMED_API_KEY=${PUBMED_API_KEY}
+    depends_on:
+      - redis
+    ports:
+      - "8001:8001"
+    volumes:
+      - ./config:/app/config:ro
+    networks:
+      - health-network
+    restart: unless-stopped
+
+  dedup:
+    build:
+      context: .
+      dockerfile: services/dedup/Dockerfile
+    container_name: health-dedup
+    environment:
+      - SCYLLA_HOSTS=scylladb
+      - SCYLLA_KEYSPACE=preventive_health
+      - REDIS_URL=redis://redis:6379
+    depends_on:
+      - scylladb
+      - redis
+    ports:
+      - "8002:8002"
+    volumes:
+      - ./config:/app/config:ro
+    networks:
+      - health-network
+    restart: unless-stopped
+
+  llm:
+    build:
+      context: .
+      dockerfile: services/llm/Dockerfile
+    container_name: health-llm
+    environment:
+      - LLM_PROVIDER=${LLM_PROVIDER:-openai}
+      - LLM_API_KEY=${LLM_API_KEY}
+      - LLM_MODEL=${LLM_MODEL:-gpt-4-turbo}
+      - REDIS_URL=redis://redis:6379
+    depends_on:
+      - redis
+    ports:
+      - "8004:8004"
+    volumes:
+      - ./config:/app/config:ro
+    networks:
+      - health-network
+    restart: unless-stopped
+
+  notification:
+    build:
+      context: .
+      dockerfile: services/notification/Dockerfile
+    container_name: health-notification
+    environment:
+      - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN}
+      - SLACK_SIGNING_SECRET=${SLACK_SIGNING_SECRET}
+      - REDIS_URL=redis://redis:6379
+    depends_on:
+      - redis
+    ports:
+      - "8005:8005"
+    volumes:
+      - ./config:/app/config:ro
+    networks:
+      - health-network
+    restart: unless-stopped
+
+  orchestrator:
+    build:
+      context: .
+      dockerfile: services/orchestrator/Dockerfile
+    container_name: health-orchestrator
+    environment:
+      - SCYLLA_HOSTS=scylladb
+      - SCYLLA_KEYSPACE=preventive_health
+      - REDIS_URL=redis://redis:6379
+      - CRAWLER_URL=http://crawler:8001
+      - DEDUP_URL=http://dedup:8002
+      - LLM_URL=http://llm:8004
+      - NOTIFICATION_URL=http://notification:8005
+    depends_on:
+      - crawler
+      - dedup
+      - llm
+      - notification
+      - scylladb
+      - redis
+    ports:
+      - "8006:8006"
+    volumes:
+      - ./config:/app/config:ro
+    networks:
+      - health-network
+    restart: unless-stopped
+
+  api-gateway:
+    build:
+      context: .
+      dockerfile: services/api-gateway/Dockerfile
+    container_name: health-api-gateway
+    environment:
+      - ORCHESTRATOR_URL=http://orchestrator:8006
+      - CRAWLER_URL=http://crawler:8001
+      - DEDUP_URL=http://dedup:8002
+      - LLM_URL=http://llm:8004
+      - NOTIFICATION_URL=http://notification:8005
+    depends_on:
+      - orchestrator
+    ports:
+      - "8000:8000"
+    networks:
+      - health-network
+    restart: unless-stopped
+
+  # ===================
+  # Infrastructure
+  # ===================
+  
+  scylladb:
+    image: scylladb/scylla:5.4
+    container_name: health-scylladb
+    command: --smp 1 --memory 750M --overprovisioned 1 --api-address 0.0.0.0
+    volumes:
+      - scylla-data:/var/lib/scylla
+    ports:
+      - "9042:9042"
+      - "9180:9180"
+    networks:
+      - health-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "cqlsh", "-e", "describe keyspaces"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: health-redis
+    command: redis-server --appendonly yes --maxmemory 256mb --maxmemory-policy allkeys-lru
+    volumes:
+      - redis-data:/data
+    ports:
+      - "6379:6379"
+    networks:
+      - health-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ===================
+  # Monitoring (Optional)
+  # ===================
+  
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: health-prometheus
+    volumes:
+      - ./docker/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    ports:
+      - "9090:9090"
+    networks:
+      - health-network
+    restart: unless-stopped
+    profiles:
+      - monitoring
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: health-grafana
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
+    volumes:
+      - grafana-data:/var/lib/grafana
+    ports:
+      - "3000:3000"
+    networks:
+      - health-network
+    restart: unless-stopped
+    profiles:
+      - monitoring
+
+networks:
+  health-network:
+    driver: bridge
+
+volumes:
+  scylla-data:
+  redis-data:
+  prometheus-data:
+  grafana-data:
