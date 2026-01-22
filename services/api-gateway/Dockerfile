@@ -6,10 +6,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf 
 
 WORKDIR /app
 
-COPY services/api-gateway/src/ /app/
 COPY services/api-gateway/requirements.txt /app/
-
 RUN pip install --no-cache-dir -r requirements.txt
+
+COPY services/api-gateway/*.py /app/
 
 EXPOSE 8000
 

@@ -11,10 +11,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 
 COPY shared/ /app/shared/
-COPY services/dedup/src/ /app/
 COPY services/dedup/requirements.txt /app/
-
 RUN pip install --no-cache-dir -r requirements.txt
+
+COPY services/dedup/*.py /app/
 
 EXPOSE 8002
 

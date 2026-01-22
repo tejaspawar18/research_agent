@@ -11,10 +11,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app
 
 COPY shared/ /app/shared/
-COPY services/llm/src/ /app/
 COPY services/llm/requirements.txt /app/
-
 RUN pip install --no-cache-dir -r requirements.txt
+
+COPY services/llm/*.py /app/
 
 EXPOSE 8004
 

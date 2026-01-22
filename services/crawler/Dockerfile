@@ -13,12 +13,13 @@ WORKDIR /app
 # Copy shared code
 COPY shared/ /app/shared/
 
-# Copy service code
-COPY services/crawler/src/ /app/
+# Copy requirements and install dependencies
 COPY services/crawler/requirements.txt /app/
-
-# Install dependencies
 RUN pip install --no-cache-dir -r requirements.txt
+
+# Copy service code
+COPY services/crawler/__init__.py /app/
+COPY services/crawler/*.py /app/
 
 EXPOSE 8001
 

@@ -7,10 +7,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf 
 WORKDIR /app
 
 COPY shared/ /app/shared/
-COPY services/notification/src/ /app/
 COPY services/notification/requirements.txt /app/
-
 RUN pip install --no-cache-dir -r requirements.txt
+
+COPY services/notification/*.py /app/
 
 EXPOSE 8005
 

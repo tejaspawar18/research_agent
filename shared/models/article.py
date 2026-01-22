@@ -60,6 +60,7 @@ class CrawlMethod(str, Enum):
     API = "api"
     PUBMED_API = "pubmed_api"
     SCIENCEDIRECT_SCRAPE = "sciencedirect_scrape"
+    ADAPTIVE = "adaptive"  # Intelligent multi-method fallback crawler
 
 
 class ArticleStatus(str, Enum):
@@ -123,7 +124,11 @@ class Article(BaseModel):
     # Identifiers
     doi: Optional[str] = None
     pmid: Optional[str] = None
-    
+
+    # PDF information
+    pdf_url: Optional[str] = None
+    has_pdf: bool = False
+
     # Classification
     project_area: Optional[ProjectArea] = None
     sub_topic: Optional[str] = None

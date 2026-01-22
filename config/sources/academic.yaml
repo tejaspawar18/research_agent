@@ -1,4 +1,5 @@
 # Academic Institutions & Expert Sources
+# Note: crawl_method: adaptive will try RSS, HTML, and auto-detection in sequence
 sources:
   # Harvard
   - source_id: harvard_medicine
@@ -6,7 +7,7 @@ sources:
     url: "https://magazine.hms.harvard.edu/articles"
     source_type: academic
     quality_tier: medium
-    crawl_method: html_scrape
+    crawl_method: adaptive
     rate_limit: 5
     enabled: true
     css_selectors:
@@ -15,13 +16,23 @@ sources:
       link: "h2 a, h3 a"
       date: ".date"
 
+  - source_id: yale_medicine
+    name: "Yale Medicine - Research"
+    url: "https://www.yalemedicine.org/search/news?tagId=1"
+    source_type: academic
+    quality_tier: medium
+    crawl_method: rss
+    rate_limit: 5
+    enabled: true
+    rss_url: "https://www.yalemedicine.org/rss/news.xml"
+
   # Yale Medicine
   - source_id: yale_medicine_research
     name: "Yale Medicine - Research"
     url: "https://www.yalemedicine.org/search/news?tagId=1"
     source_type: academic
     quality_tier: medium
-    crawl_method: html_scrape
+    crawl_method: adaptive
     rate_limit: 5
     enabled: true
 
@@ -30,7 +41,7 @@ sources:
     url: "https://www.yalemedicine.org/search/news?tagId=2"
     source_type: academic
     quality_tier: medium
-    crawl_method: html_scrape
+    crawl_method: adaptive
     rate_limit: 5
     enabled: true
 
@@ -39,7 +50,7 @@ sources:
     url: "https://www.yalemedicine.org/news/category/cancer-answers"
     source_type: academic
     quality_tier: medium
-    crawl_method: html_scrape
+    crawl_method: adaptive
     rate_limit: 5
     enabled: true
 
@@ -48,7 +59,7 @@ sources:
     url: "https://www.yalemedicine.org/search/news?tagId=4"
     source_type: academic
     quality_tier: medium
-    crawl_method: html_scrape
+    crawl_method: adaptive
     rate_limit: 5
     enabled: true
 
@@ -61,7 +72,7 @@ sources:
     crawl_method: rss
     rate_limit: 5
     enabled: true
-    rss_url: "https://news.mit.edu/rss/topic/science"
+    rss_url: "https://news.mit.edu/rss/research"
 
   # Stanford
   - source_id: stanford_medicine

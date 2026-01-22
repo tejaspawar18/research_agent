@@ -7,10 +7,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf 
 WORKDIR /app
 
 COPY shared/ /app/shared/
-COPY services/orchestrator/src/ /app/
 COPY services/orchestrator/requirements.txt /app/
-
 RUN pip install --no-cache-dir -r requirements.txt
+
+COPY services/orchestrator/*.py /app/
 
 EXPOSE 8006
 

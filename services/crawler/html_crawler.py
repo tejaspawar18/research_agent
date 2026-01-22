@@ -13,7 +13,8 @@ sys.path.insert(0, '/app')
 
 from shared.models import Article, Author, SourceQuality, ArticleStatus
 from shared.utils import clean_text, parse_date_string, extract_doi, get_domain
-from .base import BaseCrawler
+from base import BaseCrawler
+from pdf_extractor import PDFExtractor
 
 logger = logging.getLogger(__name__)
 
@@ -31,28 +32,41 @@ class HTMLCrawler(BaseCrawler):
         "author": ".author, .byline, .meta-author",
     }
     
-    async def crawl(self, max_articles: int = 50) -> List[Article]:
-        """Crawl HTML page for articles."""
+    async def crawl(self, max_articles: int = 50, extract_pdfs: bool = True) -> List[Article]:
+        """
+        Crawl HTML page for articles.
+
+        Args:
+            max_articles: Maximum articles to retrieve
+            extract_pdfs: Whether to attempt PDF detection (default: True)
+        """
         articles = []
-        
+
         try:
             # Fetch page
             async with aiohttp.ClientSession() as session:
                 headers = {
                     "User-Agent": "Mozilla/5.0 (compatible; PreventiveHealthBot/1.0; Research)",
                     "Accept": "text/html,application/xhtml+xml",
+                    "Accept-Language": "en-US,en;q=0.9",
                 }
-                
+
                 async with session.get(
                     self.source.url,
                     headers=headers,
-                    timeout=30
+                    timeout=30,
+                    allow_redirects=True
                 ) as response:
                     if response.status != 200:
                         logger.error(f"HTML crawl failed: {response.status} for {self.source.url}")
                         return []
-                    
+
                     html = await response.text()
+
+                    # Check if we got meaningful content
+                    if len(html) < 500:
+                        logger.warning(f"HTML response too short ({len(html)} bytes) for {self.source.url}")
+                        return []
             
             # Parse HTML
             soup = BeautifulSoup(html, 'html.parser')
@@ -75,18 +89,24 @@ class HTMLCrawler(BaseCrawler):
             
             # Parse each article
             for elem in article_elements[:max_articles]:
-                article = self._parse_element(elem, selectors)
+                article = await self._parse_element(elem, selectors, extract_pdfs)
                 if article:
                     articles.append(article)
-            
+
             logger.info(f"HTML crawl extracted {len(articles)} articles from {self.source.name}")
+
+            # Log PDF detection stats
+            if extract_pdfs:
+                pdfs_found = sum(1 for a in articles if a.has_pdf)
+                if pdfs_found > 0:
+                    logger.info(f"Found PDFs for {pdfs_found}/{len(articles)} articles")
             
         except Exception as e:
             logger.error(f"HTML crawl error for {self.source.name}: {e}")
         
         return articles
     
-    def _parse_element(self, elem, selectors: dict) -> Optional[Article]:
+    async def _parse_element(self, elem, selectors: dict, extract_pdfs: bool = True) -> Optional[Article]:
         """Parse an article element."""
         try:
             base_url = self.source.url
@@ -142,7 +162,17 @@ class HTMLCrawler(BaseCrawler):
             
             # Extract DOI if present
             doi = extract_doi(url) or extract_doi(abstract)
-            
+
+            # Try to find PDF link
+            pdf_url = None
+            has_pdf = False
+            if extract_pdfs:
+                try:
+                    pdf_url = await PDFExtractor.find_pdf_link(url, doi)
+                    has_pdf = pdf_url is not None
+                except Exception as e:
+                    logger.debug(f"PDF extraction failed for {url}: {e}")
+
             return Article(
                 source_id=self.source.source_id,
                 source_name=self.source.name,
@@ -152,6 +182,8 @@ class HTMLCrawler(BaseCrawler):
                 abstract=abstract[:3000] if abstract else None,
                 published_date=pub_date.date() if pub_date else date.today(),
                 doi=doi,
+                pdf_url=pdf_url,
+                has_pdf=has_pdf,
                 source_quality=SourceQuality(self.source.quality_tier),
                 status=ArticleStatus.CRAWLED,
                 crawled_at=datetime.utcnow(),

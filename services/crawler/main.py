@@ -20,6 +20,7 @@ from shared.config import config
 from rss_crawler import RSSCrawler
 from pubmed_crawler import PubMedCrawler
 from html_crawler import HTMLCrawler
+from adaptive_crawler import AdaptiveCrawler
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -79,6 +80,7 @@ CRAWLERS = {
     "pubmed_api": PubMedCrawler,
     "html_scrape": HTMLCrawler,
     "sciencedirect_scrape": HTMLCrawler,  # Uses same base HTML scraper
+    "adaptive": AdaptiveCrawler,  # New: intelligent multi-method crawler
 }
 
 
@@ -277,14 +279,25 @@ async def crawl_single_source(
         raise HTTPException(status_code=404, detail="Source not found")
     
     articles = await orchestrator.crawl_source(source, max_articles)
-    
+
     # Push to queue
     for article in articles:
         await redis_manager.push_queue(
             "articles:crawled",
             article.model_dump_json()
         )
-    
+
+    # Optional: Save to file for debugging (only if DEBUG_SAVE_ARTICLES env var is set)
+    import os
+    import json
+    if os.getenv("DEBUG_SAVE_ARTICLES", "true").lower() == "true":
+        try:
+            with open('/app/data/articles.json', 'w') as f:
+                json.dump([article.model_dump() for article in articles], f, indent=2, default=str)
+            logger.info(f"Saved {len(articles)} articles to /app/data/articles.json")
+        except Exception as e:
+            logger.warning(f"Failed to save articles to file: {e}")
+
     return {
         "source_id": source_id,
         "articles_found": len(articles),

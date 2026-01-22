@@ -1,0 +1,166 @@
+# PubMed/PMC Sources with specific MeSH term searches
+sources:
+  - source_id: pubmed_atherosclerosis
+    name: "PubMed - Atherosclerosis"
+    url: "https://pmc.ncbi.nlm.nih.gov/search/?term=%22atherosclerosis%22+%5BMeSH+Terms%5D&sort=date&filter=datesearch.y_1&filter=pubstate.published_article&filter=collections.open_access"
+    source_type: database
+    quality_tier: high
+    crawl_method: pubmed_api
+    rate_limit: 3
+    enabled: true
+    search_terms:
+      - "atherosclerosis[MeSH Terms]"
+
+  - source_id: pubmed_insulin
+    name: "PubMed - Insulin"
+    url: "https://pmc.ncbi.nlm.nih.gov/search/?term=%22insulin%22+%5BMeSH+Terms%5D&sort=date&filter=datesearch.y_1&filter=pubstate.published_article&filter=collections.open_access"
+    source_type: database
+    quality_tier: high
+    crawl_method: pubmed_api
+    rate_limit: 3
+    enabled: true
+    search_terms:
+      - "insulin[MeSH Terms]"
+
+  - source_id: pubmed_liver
+    name: "PubMed - Liver"
+    url: "https://pmc.ncbi.nlm.nih.gov/search/?term=%22liver%22+%5BMeSH+Terms%5D&sort=date&filter=datesearch.y_1&filter=pubstate.published_article&filter=collections.open_access"
+    source_type: database
+    quality_tier: high
+    crawl_method: pubmed_api
+    rate_limit: 3
+    enabled: true
+    search_terms:
+      - "liver[MeSH Terms]"
+
+  - source_id: pubmed_kidney
+    name: "PubMed - Kidney"
+    url: "https://pmc.ncbi.nlm.nih.gov/search/?term=%22kidney%22+%5BMeSH+Terms%5D&sort=date&filter=datesearch.y_1&filter=pubstate.published_article&filter=collections.open_access"
+    source_type: database
+    quality_tier: high
+    crawl_method: pubmed_api
+    rate_limit: 3
+    enabled: true
+    search_terms:
+      - "kidney[MeSH Terms]"
+
+  - source_id: pubmed_osteoporosis
+    name: "PubMed - Osteoporosis"
+    url: "https://pmc.ncbi.nlm.nih.gov/search/?term=%22osteoporosis%22+%5BMeSH+Terms%5D&sort=date&filter=datesearch.y_1&filter=pubstate.published_article&filter=collections.open_access"
+    source_type: database
+    quality_tier: high
+    crawl_method: pubmed_api
+    rate_limit: 3
+    enabled: true
+    search_terms:
+      - "osteoporosis[MeSH Terms]"
+
+  - source_id: pubmed_bone_density
+    name: "PubMed - Bone Density"
+    url: "https://pmc.ncbi.nlm.nih.gov/search/?term=%22bone+density%22+%5BMeSH+Terms%5D&sort=date&filter=datesearch.y_1&filter=pubstate.published_article&filter=collections.open_access"
+    source_type: database
+    quality_tier: high
+    crawl_method: pubmed_api
+    rate_limit: 3
+    enabled: true
+    search_terms:
+      - "bone density[MeSH Terms]"
+
+  - source_id: pubmed_mental_health
+    name: "PubMed - Mental Health"
+    url: "https://pmc.ncbi.nlm.nih.gov/search/?term=%22mental+health%22+%5BMeSH+Terms%5D&sort=date&filter=datesearch.y_1&filter=pubstate.published_article&filter=collections.open_access"
+    source_type: database
+    quality_tier: high
+    crawl_method: pubmed_api
+    rate_limit: 3
+    enabled: true
+    search_terms:
+      - "mental health[MeSH Terms]"
+
+  - source_id: pubmed_immune_system
+    name: "PubMed - Immune System"
+    url: "https://pmc.ncbi.nlm.nih.gov/search/?term=%22immune+system%22+%5BMeSH+Terms%5D&sort=date&filter=datesearch.y_1&filter=pubstate.published_article&filter=collections.open_access"
+    source_type: database
+    quality_tier: high
+    crawl_method: pubmed_api
+    rate_limit: 3
+    enabled: true
+    search_terms:
+      - "immune system[MeSH Terms]"
+
+  - source_id: pubmed_anxiety
+    name: "PubMed - Anxiety"
+    url: "https://pmc.ncbi.nlm.nih.gov/search/?term=%22anxiety%22+%5BMeSH+Terms%5D&sort=date&filter=datesearch.y_1&filter=pubstate.published_article&filter=collections.open_access"
+    source_type: database
+    quality_tier: high
+    crawl_method: pubmed_api
+    rate_limit: 3
+    enabled: true
+    search_terms:
+      - "anxiety[MeSH Terms]"
+
+  - source_id: pubmed_vitamins
+    name: "PubMed - Vitamins"
+    url: "https://pmc.ncbi.nlm.nih.gov/search/?term=%22vitamins%22+%5BMeSH+Terms%5D&sort=date&filter=datesearch.y_1&filter=pubstate.published_article&filter=collections.open_access"
+    source_type: database
+    quality_tier: high
+    crawl_method: pubmed_api
+    rate_limit: 3
+    enabled: true
+    search_terms:
+      - "vitamins[MeSH Terms]"
+
+  - source_id: pubmed_fats
+    name: "PubMed - Dietary Fats"
+    url: "https://pmc.ncbi.nlm.nih.gov/search/?term=%22fats%22+%5BMeSH+Terms%5D&sort=date&filter=datesearch.y_1&filter=pubstate.published_article&filter=collections.open_access"
+    source_type: database
+    quality_tier: high
+    crawl_method: pubmed_api
+    rate_limit: 3
+    enabled: true
+    search_terms:
+      - "dietary fats[MeSH Terms]"
+
+  - source_id: pubmed_diarrhea
+    name: "PubMed - Diarrhea"
+    url: "https://pmc.ncbi.nlm.nih.gov/search/?term=%22diarrhea%22+%5BMeSH+Terms%5D&sort=date&filter=datesearch.y_1&filter=pubstate.published_article&filter=collections.open_access"
+    source_type: database
+    quality_tier: high
+    crawl_method: pubmed_api
+    rate_limit: 3
+    enabled: true
+    search_terms:
+      - "diarrhea[MeSH Terms]"
+
+  - source_id: pubmed_air_pollution
+    name: "PubMed - Air Pollution"
+    url: "https://pmc.ncbi.nlm.nih.gov/search/?term=%22air+pollution%22+%5BMeSH+Terms%5D&sort=date&filter=datesearch.y_1&filter=pubstate.published_article&filter=collections.open_access"
+    source_type: database
+    quality_tier: high
+    crawl_method: pubmed_api
+    rate_limit: 3
+    enabled: true
+    search_terms:
+      - "air pollution[MeSH Terms]"
+
+  - source_id: pubmed_water_pollution
+    name: "PubMed - Water Pollution"
+    url: "https://pmc.ncbi.nlm.nih.gov/search/?term=%22water+pollution%22+%5BMeSH+Terms%5D&sort=date&filter=datesearch.y_1&filter=pubstate.published_article&filter=collections.open_access"
+    source_type: database
+    quality_tier: high
+    crawl_method: pubmed_api
+    rate_limit: 3
+    enabled: true
+    search_terms:
+      - "water pollution[MeSH Terms]"
+
+  - source_id: pubmed_sleep
+    name: "PubMed - Sleep"
+    url: "https://pmc.ncbi.nlm.nih.gov/search/?term=%22sleep%22+%5BMeSH+Terms%5D&sort=date&filter=datesearch.y_1&filter=pubstate.published_article&filter=collections.open_access"
+    source_type: database
+    quality_tier: high
+    crawl_method: pubmed_api
+    rate_limit: 3
+    enabled: true
+    search_terms:
+      - "sleep[MeSH Terms]"

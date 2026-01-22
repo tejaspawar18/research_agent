@@ -14,7 +14,8 @@ sys.path.insert(0, '/app')
 
 from shared.models import Article, Author, SourceQuality, ArticleStatus
 from shared.utils import clean_text, parse_date_string, extract_pmid
-from .base import BaseCrawler
+from base import BaseCrawler
+from pdf_extractor import PDFExtractor
 
 logger = logging.getLogger(__name__)
 
@@ -29,45 +30,105 @@ class PubMedCrawler(BaseCrawler):
         self.api_key = os.getenv("PUBMED_API_KEY")
         self.rate_limit = 10 if self.api_key else 3
     
-    async def crawl(self, max_articles: int = 50) -> List[Article]:
-        """Crawl PubMed for recent articles."""
+    async def crawl(self, max_articles: int = 50, extract_pdfs: bool = True) -> List[Article]:
+        """
+        Crawl PubMed for recent articles.
+
+        Uses progressive fallback strategy:
+        1. Try last 30 days with open access
+        2. If insufficient, try last 90 days with open access
+        3. If still insufficient, try last 30 days without OA filter
+        """
         articles = []
-        
+
         # Get search terms from source config
         search_terms = self.source.search_terms or []
         if not search_terms:
-            # Extract from URL if not explicitly set
             logger.warning(f"No search terms for PubMed source: {self.source.name}")
             return []
-        
+
         try:
-            # Build search query
-            query = " OR ".join(search_terms)
-            
-            # Add date filter (last 7 days)
-            end_date = date.today()
-            start_date = end_date - timedelta(days=7)
-            query += f" AND ({start_date.strftime('%Y/%m/%d')}:{end_date.strftime('%Y/%m/%d')}[Date - Publication])"
-            
-            # Add open access filter
-            query += " AND open access[filter]"
-            
-            # Search for PMIDs
-            pmids = await self._search(query, max_articles)
-            
+            # Build base query from search terms
+            base_query = " OR ".join(search_terms)
+
+            # Strategy 1: Last 30 days with open access filter
+            pmids = await self._search_with_strategy(
+                base_query,
+                days=30,
+                open_access=True,
+                max_results=max_articles
+            )
+
+            # Strategy 2: If few results, try last 90 days with open access
+            if len(pmids) < max_articles // 2:
+                logger.info(f"Only {len(pmids)} results found, expanding to 90 days")
+                pmids = await self._search_with_strategy(
+                    base_query,
+                    days=90,
+                    open_access=True,
+                    max_results=max_articles
+                )
+
+            # Strategy 3: If still few results, try last 30 days without OA filter
+            if len(pmids) < max_articles // 2:
+                logger.info(f"Only {len(pmids)} results found, removing OA filter")
+                pmids = await self._search_with_strategy(
+                    base_query,
+                    days=30,
+                    open_access=False,
+                    max_results=max_articles
+                )
+
             if not pmids:
-                logger.info(f"No PubMed results for: {self.source.name}")
+                logger.info(f"No PubMed results for: {self.source.name} (query: {base_query})")
                 return []
-            
+
+            logger.info(f"Found {len(pmids)} PMIDs for {self.source.name}")
+
             # Fetch article details
-            articles = await self._fetch_details(pmids)
-            
+            articles = await self._fetch_details(pmids, extract_pdfs)
+
             logger.info(f"PubMed crawl found {len(articles)} articles for {self.source.name}")
-            
+
         except Exception as e:
             logger.error(f"PubMed crawl error for {self.source.name}: {e}")
-        
+
         return articles
+
+    async def _search_with_strategy(
+        self,
+        base_query: str,
+        days: int,
+        open_access: bool,
+        max_results: int
+    ) -> List[str]:
+        """
+        Search PubMed with specific strategy.
+
+        Args:
+            base_query: Base search query
+            days: Number of days to look back
+            open_access: Whether to filter for open access only
+            max_results: Maximum results to return
+
+        Returns:
+            List of PMIDs
+        """
+        query = base_query
+
+        # Add date filter
+        end_date = date.today()
+        start_date = end_date - timedelta(days=days)
+        query += f" AND ({start_date.strftime('%Y/%m/%d')}:{end_date.strftime('%Y/%m/%d')}[Date - Publication])"
+
+        # Add open access filter if requested
+        if open_access:
+            query += " AND open access[filter]"
+
+        logger.debug(f"PubMed query: {query}")
+
+        # Search for PMIDs
+        return await self._search(query, max_results)
     
     async def _search(self, query: str, max_results: int) -> List[str]:
         """Search PubMed and return PMIDs."""
@@ -96,48 +157,54 @@ class PubMedCrawler(BaseCrawler):
                 result = data.get("esearchresult", {})
                 return result.get("idlist", [])
     
-    async def _fetch_details(self, pmids: List[str]) -> List[Article]:
+    async def _fetch_details(self, pmids: List[str], extract_pdfs: bool = True) -> List[Article]:
         """Fetch article details for list of PMIDs."""
         if not pmids:
             return []
-        
+
         params = {
             "db": "pubmed",
             "id": ",".join(pmids),
             "retmode": "xml",
             "rettype": "abstract",
         }
-        
+
         if self.api_key:
             params["api_key"] = self.api_key
-        
+
         url = f"{self.BASE_URL}/efetch.fcgi?{urlencode(params)}"
-        
+
         articles = []
-        
+
         async with aiohttp.ClientSession() as session:
             async with session.get(url, timeout=60) as response:
                 if response.status != 200:
                     logger.error(f"PubMed fetch failed: {response.status}")
                     return []
-                
+
                 xml_text = await response.text()
-        
+
         # Parse XML
         try:
             root = ET.fromstring(xml_text)
-            
+
             for article_elem in root.findall('.//PubmedArticle'):
-                article = self._parse_article(article_elem)
+                article = await self._parse_article(article_elem, extract_pdfs)
                 if article:
                     articles.append(article)
-                    
+
+            # Log PDF detection stats
+            if extract_pdfs and articles:
+                pdfs_found = sum(1 for a in articles if a.has_pdf)
+                if pdfs_found > 0:
+                    logger.info(f"Found PDFs for {pdfs_found}/{len(articles)} PubMed articles")
+
         except ET.ParseError as e:
             logger.error(f"Failed to parse PubMed XML: {e}")
-        
+
         return articles
     
-    def _parse_article(self, article_elem: ET.Element) -> Optional[Article]:
+    async def _parse_article(self, article_elem: ET.Element, extract_pdfs: bool = True) -> Optional[Article]:
         """Parse a single PubMed article."""
         try:
             medline = article_elem.find('.//MedlineCitation')
@@ -237,7 +304,34 @@ class PubMedCrawler(BaseCrawler):
             
             # Build URL
             url = f"https://pubmed.ncbi.nlm.nih.gov/{pmid}/"
-            
+
+            # Try to find PDF link (PMC or publisher)
+            pdf_url = None
+            has_pdf = False
+            if extract_pdfs:
+                try:
+                    # Check for PMC ID (free full text)
+                    pmc_id = None
+                    for id_elem in article_elem.findall('.//ArticleId'):
+                        if id_elem.get('IdType') == 'pmc':
+                            pmc_id = id_elem.text
+                            break
+
+                    if pmc_id:
+                        # PMC articles have free PDFs
+                        # Ensure PMC ID has 'PMC' prefix
+                        if not pmc_id.startswith('PMC'):
+                            pmc_id = f"PMC{pmc_id}"
+                        pdf_url = f"https://www.ncbi.nlm.nih.gov/pmc/articles/{pmc_id}/pdf/"
+                        has_pdf = True
+                        logger.debug(f"Found PMC PDF: {pdf_url}")
+                    else:
+                        # Try to find PDF via DOI or PubMed link
+                        pdf_url = await PDFExtractor.find_pdf_link(url, doi)
+                        has_pdf = pdf_url is not None
+                except Exception as e:
+                    logger.debug(f"PDF extraction failed for PMID {pmid}: {e}")
+
             return Article(
                 source_id=self.source.source_id,
                 source_name=self.source.name,
@@ -248,6 +342,8 @@ class PubMedCrawler(BaseCrawler):
                 published_date=pub_date.date() if pub_date else date.today(),
                 doi=doi,
                 pmid=pmid,
+                pdf_url=pdf_url,
+                has_pdf=has_pdf,
                 keywords=keywords[:20],  # Limit keywords
                 source_quality=SourceQuality.HIGH,  # PubMed is high quality
                 status=ArticleStatus.CRAWLED,

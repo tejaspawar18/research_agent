@@ -13,12 +13,27 @@ services:
     environment:
       - REDIS_URL=redis://redis:6379
       - PUBMED_API_KEY=${PUBMED_API_KEY}
+      - DEBUG_SAVE_ARTICLES=${DEBUG_SAVE_ARTICLES:-true}
     depends_on:
       - redis
     ports:
       - "8001:8001"
     volumes:
       - ./config:/app/config:ro
+      - ./data/crawler:/app/data
+    networks:
+      - health-network
+    restart: unless-stopped
+
+  extraction:
+    build:
+      context: .
+      dockerfile: services/extraction/Dockerfile
+    container_name: health-extraction
+    environment:
+      - PUBMED_API_KEY=${PUBMED_API_KEY}
+    ports:
+      - "8003:8003"
     networks:
       - health-network
     restart: unless-stopped
@@ -93,10 +108,12 @@ services:
       - REDIS_URL=redis://redis:6379
       - CRAWLER_URL=http://crawler:8001
       - DEDUP_URL=http://dedup:8002
+      - EXTRACTION_URL=http://extraction:8003
       - LLM_URL=http://llm:8004
       - NOTIFICATION_URL=http://notification:8005
     depends_on:
       - crawler
+      - extraction
       - dedup
       - llm
       - notification
@@ -106,6 +123,7 @@ services:
       - "8006:8006"
     volumes:
       - ./config:/app/config:ro
+      - ./data/orchestrator:/app/data
     networks:
       - health-network
     restart: unless-stopped
@@ -119,6 +137,7 @@ services:
       - ORCHESTRATOR_URL=http://orchestrator:8006
       - CRAWLER_URL=http://crawler:8001
       - DEDUP_URL=http://dedup:8002
+      - EXTRACTION_URL=http://extraction:8003
       - LLM_URL=http://llm:8004
       - NOTIFICATION_URL=http://notification:8005
     depends_on:

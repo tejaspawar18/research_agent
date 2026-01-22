@@ -1,0 +1,161 @@
+# High-quality peer-reviewed journals
+sources:
+  # Nature Publishing Group
+  - source_id: nature_research
+    name: "Nature Research Articles"
+    url: "https://www.nature.com/nature/research-articles"
+    source_type: journal
+    quality_tier: high
+    crawl_method: rss
+    rate_limit: 5
+    enabled: true
+    rss_url: "https://www.nature.com/nature.rss"
+
+  - source_id: nature_communications
+    name: "Nature Communications"
+    url: "https://www.nature.com/ncomms/"
+    source_type: journal
+    quality_tier: high
+    crawl_method: rss
+    rate_limit: 5
+    enabled: true
+    rss_url: "https://www.nature.com/ncomms.rss"
+
+  - source_id: nature_food
+    name: "Nature Food"
+    url: "https://www.nature.com/natfood"
+    source_type: journal
+    quality_tier: high
+    crawl_method: rss
+    rate_limit: 5
+    enabled: true
+    rss_url: "https://www.nature.com/natfood.rss"
+
+  # Cell Press
+  - source_id: cell_neuron
+    name: "Cell - Neuron"
+    url: "https://www.cell.com/neuron/newarticles"
+    source_type: journal
+    quality_tier: high
+    crawl_method: rss
+    rate_limit: 5
+    enabled: true
+    rss_url: "https://www.cell.com/neuron/rss"
+
+  # Lancet Journals
+  - source_id: lancet_diabetes
+    name: "Lancet Diabetes & Endocrinology"
+    url: "https://www.thelancet.com/journals/landia/home"
+    source_type: journal
+    quality_tier: high
+    crawl_method: rss
+    rate_limit: 5
+    enabled: true
+    rss_url: "https://www.thelancet.com/rssfeed/landia_current.xml"
+
+  - source_id: lancet_respiratory
+    name: "Lancet Respiratory Medicine"
+    url: "https://www.thelancet.com/journals/lanres/home"
+    source_type: journal
+    quality_tier: high
+    crawl_method: rss
+    rate_limit: 5
+    enabled: true
+    rss_url: "https://www.thelancet.com/rssfeed/lanres_current.xml"
+
+  - source_id: lancet_southeast_asia
+    name: "Lancet Southeast Asia"
+    url: "https://www.thelancet.com/journals/lansea/home"
+    source_type: journal
+    quality_tier: high
+    crawl_method: rss
+    rate_limit: 5
+    enabled: true
+    rss_url: "https://www.thelancet.com/rssfeed/lansea_current.xml"
+
+  - source_id: lancet_rheumatology
+    name: "Lancet Rheumatology"
+    url: "https://www.thelancet.com/journals/lanrhe/home"
+    source_type: journal
+    quality_tier: high
+    crawl_method: rss
+    rate_limit: 5
+    enabled: true
+    rss_url: "https://www.thelancet.com/rssfeed/lanrhe_current.xml"
+
+  # BMJ
+  - source_id: bmj_clinical_review
+    name: "BMJ Clinical Review"
+    url: "https://www.bmj.com/education/clinical-review"
+    source_type: journal
+    quality_tier: high
+    crawl_method: rss
+    rate_limit: 5
+    enabled: true
+    rss_url: "https://www.bmj.com/rss/clinic.xml"
+
+  - source_id: bmj_research
+    name: "BMJ Research"
+    url: "https://www.bmj.com/research/research"
+    source_type: journal
+    quality_tier: high
+    crawl_method: rss
+    rate_limit: 5
+    enabled: true
+    rss_url: "https://www.bmj.com/rss/recent.xml"
+
+  - source_id: bmj_practice
+    name: "BMJ Practice"
+    url: "https://www.bmj.com/education/practice"
+    source_type: journal
+    quality_tier: high
+    crawl_method: rss
+    rate_limit: 5
+    enabled: true
+
+  # European Journal of Medical Research
+  - source_id: eur_j_med_res
+    name: "European Journal of Medical Research"
+    url: "https://eurjmedres.biomedcentral.com/articles"
+    source_type: journal
+    quality_tier: high
+    crawl_method: rss
+    rate_limit: 5
+    enabled: true
+    rss_url: "https://eurjmedres.biomedcentral.com/articles/most-recent/rss.xml"
+
+  # JAHA
+  - source_id: jaha
+    name: "Journal of the American Heart Association"
+    url: "https://www.ahajournals.org/journal/jaha"
+    source_type: journal
+    quality_tier: high
+    crawl_method: rss
+    rate_limit: 5
+    enabled: true
+    rss_url: "https://www.ahajournals.org/action/showFeed?type=etoc&feed=rss&jc=jaha"
+
+  # IHME
+  - source_id: ihme
+    name: "Institute for Health Metrics and Evaluation"
+    url: "https://www.healthdata.org/search?f%5B0%5D=content_type%3Ascientific_publication"
+    source_type: journal
+    quality_tier: high
+    crawl_method: html_scrape
+    rate_limit: 5
+    enabled: true
+    css_selectors:
+      article_list: ".view-content .views-row"
+      title: "h3 a"
+      link: "h3 a"
+      date: ".date-display-single"
+
+  # Obesity & Energetics
+  - source_id: obesity_energetics
+    name: "Obesity and Energy Offerings"
+    url: "https://www.obesityandenergetics.org/"
+    source_type: journal
+    quality_tier: medium
+    crawl_method: html_scrape
+    rate_limit: 5
+    enabled: true

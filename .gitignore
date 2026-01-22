@@ -18,3 +18,5 @@ htmlcov/
 logs/
 *.db
 data/
+CRAWLER_IMPROVEMENTS.md
+services/extraction/README.md

@@ -3,6 +3,7 @@ Orchestrator Service - Pipeline coordination and scheduling.
 """
 import logging
 import asyncio
+import os
 from contextlib import asynccontextmanager
 from typing import List, Dict, Any, Optional
 from datetime import datetime, date
@@ -30,6 +31,7 @@ scheduler = AsyncIOScheduler()
 
 CRAWLER_URL = "http://crawler:8001"
 DEDUP_URL = "http://dedup:8002"
+EXTRACTION_URL = "http://extraction:8003"
 LLM_URL = "http://llm:8004"
 NOTIFICATION_URL = "http://notification:8005"
 
@@ -55,6 +57,7 @@ app = FastAPI(title="Orchestrator Service", version="1.0.0", lifespan=lifespan)
 class PipelineRequest(BaseModel):
     source_ids: Optional[List[str]] = None
     skip_crawl: bool = False
+    skip_extraction: bool = False
     skip_llm: bool = False
     skip_notify: bool = False
 
@@ -74,6 +77,7 @@ class PipelineOrchestrator:
         self,
         source_ids: Optional[List[str]] = None,
         skip_crawl: bool = False,
+        skip_extraction: bool = False,
         skip_llm: bool = False,
         skip_notify: bool = False,
     ) -> PipelineRun:
@@ -100,27 +104,46 @@ class PipelineOrchestrator:
             unique_articles = await self._deduplicate(articles)
             run.articles_deduplicated = len(unique_articles)
             logger.info(f"Deduplicated to {len(unique_articles)} articles")
-            
-            # Step 3: LLM Processing
+
+            # Step 3: Extract Full Text
+            extracted_articles = unique_articles
+            if not skip_extraction and unique_articles:
+                run.status = "extracting"
+                extracted_articles = await self._extract_fulltext(unique_articles)
+                logger.info(f"Extracted full text for {len([a for a in extracted_articles if a.full_text])} articles")
+
+            # Step 4: LLM Processing
             processed_articles = []
-            if not skip_llm and unique_articles:
+            if not skip_llm and extracted_articles:
                 run.status = "processing"
-                processed_articles = await self._llm_process(unique_articles)
+                processed_articles = await self._llm_process(extracted_articles)
                 run.articles_filtered = len(processed_articles)
                 run.articles_summarized = len([a for a in processed_articles if a.summary])
                 logger.info(f"Processed {len(processed_articles)} articles")
             else:
-                processed_articles = unique_articles
-            
-            # Step 4: Store in ScyllaDB
+                processed_articles = extracted_articles
+
+            # Save articles to JSON file for inspection
+            try:
+                os.makedirs("/app/data", exist_ok=True)
+                output_file = f"/app/data/processed_articles_{run.run_id}.json"
+                with open(output_file, "w") as f:
+                    json.dump([article.model_dump() for article in processed_articles], f, indent=2, default=str)
+                logger.info(f"Saved {len(processed_articles)} articles to {output_file}")
+            except Exception as e:
+                logger.warning(f"Failed to save articles to JSON file: {e}")
+                
+            # Step 5: Store in ScyllaDB
             run.status = "storing"
             for article in processed_articles:
                 try:
                     db_manager.insert_article(article.model_dump())
                 except Exception as e:
                     logger.warning(f"Failed to store article: {e}")
-            
-            # Step 5: Notify
+
+            logger.info(f"Stored {len(processed_articles)} articles in ScyllaDB")
+
+            # Step 6: Notify
             if not skip_notify and processed_articles:
                 run.status = "notifying"
                 notified = await self._notify(processed_articles)
@@ -169,7 +192,7 @@ class PipelineOrchestrator:
     async def _deduplicate(self, articles: List[Article]) -> List[Article]:
         if not articles:
             return []
-        
+
         try:
             async with httpx.AsyncClient(timeout=120.0) as client:
                 response = await client.post(
@@ -178,15 +201,71 @@ class PipelineOrchestrator:
                 )
                 response.raise_for_status()
                 result = response.json()
-                
+
                 unique = []
                 for article, dedup_result in zip(articles, result["results"]):
                     if not dedup_result["is_duplicate"]:
                         unique.append(article)
-                
+
                 return unique
         except Exception as e:
             logger.error(f"Dedup failed: {e}")
+            return articles
+
+    async def _extract_fulltext(self, articles: List[Article]) -> List[Article]:
+        """Extract full text for articles."""
+        if not articles:
+            return []
+
+        extracted_count = 0
+
+        try:
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                for article in articles:
+                    try:
+                        # Prepare extraction request
+                        extraction_data = {
+                            "url": article.url,
+                            "method": "auto"
+                        }
+
+                        # Add PMC ID if available
+                        if hasattr(article, 'pmc_id') and article.pmc_id:
+                            extraction_data["pmc_id"] = article.pmc_id
+
+                        # Add PMID if available
+                        if hasattr(article, 'pmid') and article.pmid:
+                            extraction_data["pmid"] = article.pmid
+
+                        # Add PDF URL if available
+                        if hasattr(article, 'pdf_url') and article.pdf_url:
+                            extraction_data["pdf_url"] = article.pdf_url
+
+                        # Call extraction service
+                        response = await client.post(
+                            f"{EXTRACTION_URL}/extract",
+                            json=extraction_data,
+                            timeout=30.0
+                        )
+
+                        if response.status_code == 200:
+                            result = response.json()
+                            if result.get("success") and result.get("full_text"):
+                                article.full_text = result["full_text"]
+                                extracted_count += 1
+                                logger.debug(f"Extracted {result['char_count']} chars using {result['method_used']} for {article.url}")
+                            else:
+                                logger.debug(f"Extraction failed for {article.url}: {result.get('error', 'Unknown error')}")
+
+                    except Exception as e:
+                        logger.warning(f"Failed to extract full text for {article.url}: {e}")
+                        continue
+
+                logger.info(f"Successfully extracted full text for {extracted_count}/{len(articles)} articles")
+                return articles
+
+        except Exception as e:
+            logger.error(f"Full text extraction failed: {e}")
             return articles
     
     async def _llm_process(self, articles: List[Article]) -> List[Article]:
@@ -298,7 +377,7 @@ async def trigger_pipeline(request: PipelineRequest, background_tasks: Backgroun
     
     background_tasks.add_task(
         orchestrator.run_pipeline,
-        request.source_ids, request.skip_crawl, request.skip_llm, request.skip_notify
+        request.source_ids, request.skip_crawl, request.skip_extraction, request.skip_llm, request.skip_notify
     )
     
     return PipelineResponse(run_id="pending", status="started", message="Pipeline initiated")
