@@ -139,8 +139,12 @@ class HTMLCrawler(BaseCrawler):
             date_elem = elem.select_one(date_selector)
             
             if date_elem:
-                date_text = date_elem.get_text() or date_elem.get('datetime', '')
+                # Prefer datetime attribute (more reliable, standard ISO format)
+                date_text = date_elem.get('datetime', '') or date_elem.get('content', '') or date_elem.get_text()
                 pub_date = parse_date_string(date_text)
+                # If datetime attr failed, try visible text
+                if not pub_date and date_elem.get('datetime'):
+                    pub_date = parse_date_string(date_elem.get_text())
             
             # Extract abstract/summary
             abstract = ""

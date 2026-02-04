@@ -1,7 +1,7 @@
 # Pipeline Configuration
 
 # Schedule (cron: minute hour day month day_of_week)
-schedule: "0 6 * * *"  # 6 AM daily
+schedule: "*/30 3-13 * * *"  # Every 30 minutes, 9 AM - 7 PM IST (UTC+5:30)
 
 # Processing limits
 max_articles_per_run: 500
@@ -12,6 +12,6 @@ relevance_threshold: 60.0
 parallel_crawlers: 5
 
 # Quality thresholds
-dedup_similarity_threshold: 0.85
+dedup_similarity_threshold: 0.80
 min_sample_size_observational: 150
 min_sample_size_rct: 50

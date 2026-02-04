@@ -93,13 +93,24 @@ class RSSCrawler(BaseCrawler):
                 content = entry.content[0] if isinstance(entry.content, list) else entry.content
                 abstract = clean_text(content.get('value', ''))
             
-            # Get publication date
+            # Get publication date - prefer feedparser's pre-parsed dates
             pub_date = None
-            for date_field in ['published', 'updated', 'created']:
-                if entry.get(date_field):
-                    pub_date = parse_date_string(entry[date_field])
-                    if pub_date:
+            for date_field in ['published_parsed', 'updated_parsed', 'created_parsed']:
+                parsed_time = entry.get(date_field)
+                if parsed_time:
+                    try:
+                        pub_date = datetime(*parsed_time[:6])
                         break
+                    except (ValueError, TypeError):
+                        continue
+
+            # Fallback to string parsing
+            if not pub_date:
+                for date_field in ['published', 'updated', 'created']:
+                    if entry.get(date_field):
+                        pub_date = parse_date_string(entry[date_field])
+                        if pub_date:
+                            break
             
             # Get authors
             authors = []

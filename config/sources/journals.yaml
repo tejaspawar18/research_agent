@@ -3,7 +3,7 @@ sources:
   # Nature Publishing Group
   - source_id: nature_research
     name: "Nature Research Articles"
-    url: "https://www.nature.com/nature/research-articles"
+    url: "https://www.nature.com/nature/research-articles.rss"
     source_type: journal
     quality_tier: high
     crawl_method: rss
@@ -13,7 +13,7 @@ sources:
 
   - source_id: nature_communications
     name: "Nature Communications"
-    url: "https://www.nature.com/ncomms/"
+    url: "https://www.nature.com/ncomms.rss"
     source_type: journal
     quality_tier: high
     crawl_method: rss
@@ -23,7 +23,7 @@ sources:
 
   - source_id: nature_food
     name: "Nature Food"
-    url: "https://www.nature.com/natfood"
+    url: "https://www.nature.com/natfood.rss"
     source_type: journal
     quality_tier: high
     crawl_method: rss

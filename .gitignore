@@ -20,3 +20,4 @@ logs/
 data/
 CRAWLER_IMPROVEMENTS.md
 services/extraction/README.md
+tests/

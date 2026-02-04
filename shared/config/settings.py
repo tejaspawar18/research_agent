@@ -39,7 +39,7 @@ class LLMConfig(BaseModel):
 
 class PipelineConfig(BaseModel):
     """Pipeline configuration."""
-    schedule: str = "0 6 * * *"  # 6 AM daily
+    schedule: str = "*/30 3-13 * * *"  # Every 30 minutes, 9 AM - 7 PM IST (UTC+5:30)
     max_articles_per_run: int = 500
     max_articles_per_source: int = 50
     relevance_threshold: float = 60.0
@@ -60,7 +60,7 @@ class Settings(BaseSettings):
     # ScyllaDB
     scylla_hosts: str = "scylladb"
     scylla_port: int = 9042
-    scylla_keyspace: str = "preventive_health"
+    scylla_keyspace: str = "ai_events"
     scylla_username: str = ""
     scylla_password: str = ""
     
@@ -83,7 +83,21 @@ class Settings(BaseSettings):
     llm_url: str = "http://llm:8004"
     notification_url: str = "http://notification:8005"
     orchestrator_url: str = "http://orchestrator:8006"
-    
+
+    # Kafka
+    kafka_broker_prod: str = ""
+    kafka_broker_beta: str = ""
+    kafka_broker: str = "localhost:9092"
+    kafka_topic_articles: str = "preventive-health-articles"
+    kafka_topic_events: str = "preventive-health-events"
+    producer_client_id: str = "preventive-health-pipeline-producer"
+
+    # AWS S3
+    aws_access_key_id: str = ""
+    aws_secret_access_key: str = ""
+    aws_region: str = "ap-south-1"
+    s3_bucket: str = "pulse-narrative"
+
     class Config:
         env_file = ".env"
         env_file_encoding = "utf-8"

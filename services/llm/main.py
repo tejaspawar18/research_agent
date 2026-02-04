@@ -4,6 +4,8 @@ LLM Service - AI-powered quality filtering, classification, and summarization.
 import logging
 import os
 import json
+import re
+import asyncio
 from contextlib import asynccontextmanager
 from typing import List, Dict, Any, Optional
 from datetime import datetime
@@ -31,6 +33,26 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 redis_manager = RedisManager()
+
+
+def clean_json_response(response_text: str) -> str:
+    """Clean LLM response for JSON parsing."""
+    text = response_text.strip()
+    # Remove markdown code blocks
+    if text.startswith("```json"):
+        text = text[7:]
+    if text.startswith("```"):
+        text = text[3:]
+    if text.endswith("```"):
+        text = text[:-3]
+    text = text.strip()
+    # Remove control characters that break JSON parsing
+    text = re.sub(r'[\x00-\x1f\x7f]', ' ', text)
+    # Fix common JSON issues
+    text = text.replace('\n', '\\n').replace('\r', '\\r').replace('\t', '\\t')
+    # But restore escaped newlines inside strings that were double-escaped
+    text = text.replace('\\\\n', '\\n')
+    return text
 
 
 @asynccontextmanager
@@ -129,6 +151,8 @@ class LLMProvider:
         """Generate completion."""
         if self.provider == "anthropic":
             return await self._anthropic_complete(messages, max_tokens, temperature)
+        elif self.provider == "gemini":
+            return await self._gemini_complete(messages, max_tokens, temperature)
         else:
             return await self._openai_complete(messages, max_tokens, temperature)
     
@@ -160,7 +184,7 @@ class LLMProvider:
                 system_msg = msg["content"]
             else:
                 user_msgs.append(msg)
-        
+
         async with httpx.AsyncClient() as client:
             response = await client.post(
                 "https://api.anthropic.com/v1/messages",
@@ -180,6 +204,60 @@ class LLMProvider:
             response.raise_for_status()
             data = response.json()
             return data["content"][0]["text"]
+
+    async def _gemini_complete(self, messages, max_tokens, temperature) -> str:
+        """Google Gemini API completion."""
+        # Convert messages to Gemini format
+        # Gemini uses "contents" with "parts"
+        contents = []
+        system_instruction = None
+
+        for msg in messages:
+            if msg["role"] == "system":
+                system_instruction = msg["content"]
+            elif msg["role"] == "user":
+                contents.append({
+                    "role": "user",
+                    "parts": [{"text": msg["content"]}]
+                })
+            elif msg["role"] == "assistant":
+                contents.append({
+                    "role": "model",
+                    "parts": [{"text": msg["content"]}]
+                })
+
+        # Use gemini-2.0-flash model
+        model = self.model or "gemini-2.0-flash"
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={self.api_key}"
+
+        payload = {
+            "contents": contents,
+            "generationConfig": {
+                "maxOutputTokens": max_tokens,
+                "temperature": temperature,
+            }
+        }
+
+        if system_instruction:
+            payload["systemInstruction"] = {"parts": [{"text": system_instruction}]}
+
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                url,
+                headers={"Content-Type": "application/json"},
+                json=payload,
+                timeout=90.0,
+            )
+            response.raise_for_status()
+            data = response.json()
+
+            # Extract text from Gemini response
+            if "candidates" in data and data["candidates"]:
+                candidate = data["candidates"][0]
+                if "content" in candidate and "parts" in candidate["content"]:
+                    return candidate["content"]["parts"][0]["text"]
+
+            raise ValueError(f"Unexpected Gemini response format: {data}")
 
 
 # Quality Filter
@@ -317,25 +395,93 @@ class QualityFilter:
 # Classifier
 class ArticleClassifier:
     """Classify articles into project areas and sub-topics."""
-    
+
     CLASSIFY_PROMPT = """You are a medical research classifier specializing in preventive health.
 
-Classify this article into ONE of these project areas:
-1. disease_prevention - Preventing diseases (heart, diabetes, cancer, neuro, mental, etc.)
-2. behavioral_protocols - Exercise, sleep, meditation, risky behaviors
-3. nutritional_protocols - Diet, supplements, hydration, macros/micros
-4. government_interventions - Policy, pollution, food safety, public health
-5. youth_health - School/college health programs, adolescent health
+## CLASSIFICATION TASK
+Classify this article into ONE project area and ONE specific sub-topic.
 
-Article Title: {title}
+## PROJECT AREAS AND SUB-TOPICS
+
+**PROJECT 1: disease_prevention** - Preventing key diseases impacting physical, cognitive and emotional health
+Sub-topics:
+- "Preventing Atherosclerotic Heart Disease" → Keywords: heart, atherosclerosis, plaque, lipid, calcification, cholesterol, LDL, HDL, endothelial dysfunction, statin, pcsk9, lipoprotein, ApoB, ApoA, triglyceride, coronary artery, cardiology
+- "Preventing Type 2 Diabetes and Insulin Resistance" → Keywords: insulin, glucose, beta cell, glp-1, metformin, hyperinsulinemia, prediabetes, hba1c, c-peptide
+- "Preventing Other Key Metabolic Diseases" → Keywords: blood pressure, liver, fatty liver, kidney, cirrhosis, fibrosis, albuminuria, creatinine, hypertension, NAFLD, DKD
+- "Preventing Cancers" → Keywords: carcinogenic, tumor, immunotherapy, leukocytes, genetic instability, genomic instability, t-cell, oncogenes, oncologist
+- "Preventing Musculoskeletal Diseases" → Keywords: muscles, joints, bones, sarcopenia, osteoporosis, bone mass, muscle mass, body mineral density, cartilage, tendon, ligament, myokines, osteoblast, osteoclast, gait mechanics, orthopedic
+- "Preventing Neurodegenerative Diseases" → Keywords: dementia, parkinson's, alzheimer's, huntington's, brain, neurotransmitters, cortex, lobe, memory, motor, nervous system, neuroinflammation, lewy bodies
+- "Preventing Mental Health Conditions" → Keywords: anxiety, depression, mood, brain, endocrine, neurotransmitters, psychology, serotonin, dopamine, stress
+- "Maintaining Foundational Health" → Keywords: immune system, innate immunity, adaptive immunity, gut microbiome, microbiota, skin barrier, retina, teeth, tongue, oral microbiome, immunity, gut, oral, skin, eye, ear
+
+**PROJECT 2: behavioral_protocols** - Leveraging behavioural protocols for improving healthspan
+Sub-topics:
+- "Using Cardiovascular Exercises" → Keywords: aerobic training, anaerobic exercise, heart rate, heart activity, endurance, cardiac output
+- "Using Resistance Training Exercises" → Keywords: hypertrophy, muscle, strength, fast twitch
+- "Using Stability and Mobility Exercises" → Keywords: balance, flexibility, motor coordination, yoga
+- "Sleep" → Keywords: circadian rhythm, REM, Non-REM, sleep architecture, chronotype, slow wave, sleep environment
+- "Meditation, Breathwork and Related Practices" → Keywords: breathing, breathwork, meditation, mindfulness
+- "Emerging Behavioural Protocols" → Keywords: naturotherapy, heat exposure, cold exposure, infra-red exposure, cryotherapy, HBOT, hydrotherapy, sauna, acupuncture
+- "Risky Behaviours" → Keywords: tobacco, smoking, vaping, alcohol, drugs, digital addiction, opioids, nicotine, addiction, dopamine
+
+**PROJECT 3: nutritional_protocols** - Leveraging nutritional protocols for improving healthspan
+Sub-topics:
+- "Protein" → Keywords: amino acid, plant protein, animal protein, whey
+- "Sugar and Carbohydrates" → Keywords: glycemic index, simple carbs, complex carbs, fructose, sucrose, refined carbs, starch
+- "Fats and Oils" → Keywords: saturated fat, unsaturated fats, PUFA, MUFA, omega-6, trans fats
+- "Hydration and Salts" → Keywords: electrolyte, water, sodium, osmosis, fluids, mineral absorption, dehydration
+- "Comparison of Popular Diets and Dietary Techniques" → Keywords: fasting, mediterranean, low-carb, vegan, vegetarian, intermittent
+- "Micronutrients and Conventional Supplements" → Keywords: vitamin, mineral, gummies, iron, calcium, multivitamin
+- "Emerging Supplements" → Keywords: omega-3, fibre, magnesium, creatine, NAD, ashwagandha, herbal, food fortification
+
+**PROJECT 4: government_interventions** - Key government interventions for promoting preventive approaches to public health
+Sub-topics:
+- "Improving Nutritional Standards and Food Safety" → Keywords: food labelling, food scoring, food adulteration, food safety, food quality
+- "Preventing Respiratory Infections by Tackling Air Pollution" → Keywords: PM 2.5, PM 10, COPD, ambient air, emission, alveoli, hazardous air
+- "Preventing Gastrointestinal Infections by Tackling Water Pollution" → Keywords: waterborne, fecal, e. coli, diarrhea
+- "Reducing Exposure to Key Toxins" → Keywords: microplastics, PFAs, phthalates, heavy metals, bioaccumulation, toxicology
+- "Driving Mass Behavioural Change Through Effective Public Health Communications" → Keywords: health literacy, health communication, behavioural change, nudge, campaigns, outreach, mobilisation
+- "Increasing Funding of Preventive Approaches to Public Health" → Keywords: insurance, funding, investment, finance, budget, public health expenditure, OOPE
+- "Adapting Healthcare Professional Talent Base" → Keywords: preventive care training, workforce training, curriculum, capacity building
+
+**PROJECT 5: youth_health** - Preparing youth in schools and colleges for improved future healthspan
+Sub-topics:
+- "School and College Health Programs" → Keywords: school, students, college, adolescent health, mental health, obesity, child nutrition, development, health curriculum, school intervention, college intervention, student wellness, campus health, youth health governance
+- "Regional Youth Health Initiatives" → Keywords: India, USA, UK, EU, Australia, Scandinavia, Japan, Singapore, China, Canada, South Korea, France, Germany
+
+## QUALITY GUARDRAILS (for confidence scoring)
+
+**HIGH PRIORITY (confidence 0.8-1.0):**
+- Peer-reviewed journals: Nature, Lancet, Cell, BMJ, JAHA, ScienceDirect, PubMed, IHME
+- Study types: Meta-analyses, systematic reviews, RCTs, large cohort studies
+- Adequate sample sizes: n > 150 observational, > 50 per RCT arm
+- Clear effect sizes, confidence intervals, p-values
+- Direct match with sub-topic tags
+
+**MEDIUM PRIORITY (confidence 0.5-0.8):**
+- Expert commentary from Harvard, Yale, MIT, Stanford, Peter Attia
+- Well-done observational studies, smaller human mechanistic studies
+- Translational animal studies with human implications
+- Related to preventive-health but indirectly
+
+**LOW PRIORITY (confidence 0.2-0.5):**
+- Non-peer-reviewed, opinion pieces, preprints
+- Cross-sectional claiming causation, case studies, small samples (n < 20)
+- Missing effect sizes or p-values
+- Not directly aligned with preventive-health tags
+
+## ARTICLE TO CLASSIFY
+
+Title: {title}
 Abstract: {abstract}
 
-Respond in JSON format only:
+## RESPONSE FORMAT (JSON only)
 {{
-    "project_area": "<one of the 5 areas>",
-    "sub_topic": "<specific sub-topic within the area>",
-    "confidence": <0.0-1.0>,
-    "keywords": ["<relevant keywords found>"]
+    "project_area": "<one of: disease_prevention, behavioral_protocols, nutritional_protocols, government_interventions, youth_health>",
+    "sub_topic": "<exact sub-topic name from list above>",
+    "confidence": <0.0-1.0 based on guardrails>,
+    "keywords": ["<matched keywords from article>"],
+    "priority_level": "<HIGH, MEDIUM, or LOW based on guardrails>"
 }}"""
     
     def __init__(self, llm: LLMProvider):
@@ -360,9 +506,10 @@ Respond in JSON format only:
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.2,
             )
-            
-            # Parse JSON response
-            result = json.loads(response)
+
+            # Clean and parse JSON response
+            response_text = clean_json_response(response)
+            result = json.loads(response_text)
             
             return LLMClassificationResult(
                 project_area=ProjectArea(result.get("project_area", "general")),
@@ -376,28 +523,40 @@ Respond in JSON format only:
             return keyword_result
     
     def _keyword_classify(self, article: Article) -> LLMClassificationResult:
-        """Fast keyword-based classification."""
+        """Fast keyword-based classification with enhanced sub-topic matching."""
         text = f"{article.title or ''} {article.abstract or ''}".lower()
-        
+
         best_area = ProjectArea.GENERAL
         best_sub_topic = ""
         best_score = 0
         matched_keywords = []
-        
+
         for area, sub_topics in PROJECT_KEYWORDS.items():
             for sub_topic, keywords in sub_topics.items():
                 matches = [kw for kw in keywords if kw.lower() in text]
                 score = len(matches)
-                
+
+                # Boost score for exact phrase matches
+                for kw in keywords:
+                    if len(kw.split()) > 1 and kw.lower() in text:
+                        score += 2  # Multi-word phrases get bonus
+
                 if score > best_score:
                     best_score = score
                     best_area = area
                     best_sub_topic = sub_topic
                     matched_keywords = matches
-        
-        # Calculate confidence based on matches
-        confidence = min(best_score / 5, 1.0) if best_score > 0 else 0.1
-        
+
+        # Calculate confidence based on matches (scaled for new keyword structure)
+        if best_score >= 5:
+            confidence = 0.9
+        elif best_score >= 3:
+            confidence = 0.7
+        elif best_score >= 1:
+            confidence = 0.5
+        else:
+            confidence = 0.1
+
         return LLMClassificationResult(
             project_area=best_area,
             sub_topic=best_sub_topic,
@@ -424,12 +583,19 @@ Source Quality: {source_quality}
 
 Respond in JSON format only:
 {{
-    "summary": "<2-3 sentence summary focusing on preventive health implications>",
-    "key_findings": ["<finding 1>", "<finding 2>", "<finding 3>"],
+    "summary": "<A single string containing 6-7 bullet points, each on a new line, starting with '- '>",
+    "key_findings": ["<finding 1>", "<finding 2>", "<finding 3>", "<finding 4>", "<finding 5>", "<finding 6>", "<finding 7>"],
     "preventive_implications": "<what this means for prevention>",
     "quality_assessment": "<brief assessment of evidence quality>",
     "relevance_score": <0-100 relevance to preventive health>
-}}"""
+}}
+
+IMPORTANT:
+- The "summary" field must be a STRING containing 6-7 bullet points, each starting with "- " on a new line
+- Example summary format: "- Point 1\n- Point 2\n- Point 3\n- Point 4\n- Point 5\n- Point 6\n- Point 7"
+- The "key_findings" array must contain 6-7 specific findings from the study
+- Always include the "relevance_score" as a number between 0-100
+- Focus on actionable preventive health insights"""
     
     def __init__(self, llm: LLMProvider):
         self.llm = llm
@@ -449,11 +615,19 @@ Respond in JSON format only:
                 max_tokens=1000,
                 temperature=0.3,
             )
-            
-            result = json.loads(response)
-            
+
+            # Clean and parse JSON response
+            response_text = clean_json_response(response)
+            result = json.loads(response_text)
+
+            # Handle summary - convert list to string if needed
+            summary = result.get("summary", "")
+            if isinstance(summary, list):
+                # LLM returned a list of points, join them with newlines
+                summary = "\n".join(f"- {point}" if not point.startswith("-") else point for point in summary)
+
             return LLMSummaryResult(
-                summary=result.get("summary", ""),
+                summary=summary,
                 key_findings=result.get("key_findings", []),
                 preventive_implications=result.get("preventive_implications", ""),
                 quality_assessment=result.get("quality_assessment", ""),
@@ -529,11 +703,11 @@ async def process_batch(request: BatchRequest):
     results = []
     passed_count = 0
     processed_count = 0
-    
-    for article in request.articles:
+
+    for i, article in enumerate(request.articles):
         # 1. Quality filter
         filter_result = quality_filter.filter(article)
-        
+
         if not filter_result.passed:
             results.append({
                 "article_id": article.article_id,
@@ -541,14 +715,21 @@ async def process_batch(request: BatchRequest):
                 "reasons": filter_result.reasons,
             })
             continue
-        
+
         passed_count += 1
-        
+
         # 2. Classify
         classify_result = await classifier.classify(article)
-        
+
+        # Rate limit delay between LLM calls (avoid 429 errors)
+        await asyncio.sleep(0.3)
+
         # 3. Summarize
         summary_result = await summarizer.summarize(article)
+
+        # Rate limit delay between articles
+        if i < len(request.articles) - 1:
+            await asyncio.sleep(0.3)
         
         processed_count += 1
         

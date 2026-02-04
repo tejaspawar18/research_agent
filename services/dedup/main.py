@@ -185,6 +185,52 @@ async def batch_deduplicate(request: DedupBatchRequest):
     )
 
 
+@app.get("/dedup/stats")
+async def dedup_stats():
+    """Get dedup index summary: total keys, counts by type, and Redis cache stats."""
+    stats = {
+        "redis": {"url_keys": 0, "content_keys": 0, "total_cached": 0},
+        "scylladb": {"doi": 0, "pmid": 0, "title": 0, "total_indexed": 0},
+        "total_keys": 0,
+    }
+
+    # Redis key counts
+    try:
+        url_keys = 0
+        async for _ in redis_manager.client.scan_iter(match="seen:url:*", count=1000):
+            url_keys += 1
+        content_keys = 0
+        async for _ in redis_manager.client.scan_iter(match="seen:content:*", count=1000):
+            content_keys += 1
+
+        stats["redis"]["url_keys"] = url_keys
+        stats["redis"]["content_keys"] = content_keys
+        stats["redis"]["total_cached"] = url_keys + content_keys
+    except Exception as e:
+        logger.warning(f"Failed to get Redis stats: {e}")
+
+    # ScyllaDB dedup_index counts by hash_type
+    try:
+        for hash_type in ("doi", "pmid", "title"):
+            rows = db_manager.execute(
+                "SELECT COUNT(*) as cnt FROM governance_dedup_index WHERE hash_type = %s",
+                (hash_type,)
+            )
+            for row in rows:
+                stats["scylladb"][hash_type] = row.cnt
+        stats["scylladb"]["total_indexed"] = (
+            stats["scylladb"]["doi"]
+            + stats["scylladb"]["pmid"]
+            + stats["scylladb"]["title"]
+        )
+    except Exception as e:
+        logger.warning(f"Failed to get ScyllaDB stats: {e}")
+
+    stats["total_keys"] = stats["redis"]["total_cached"] + stats["scylladb"]["total_indexed"]
+
+    return stats
+
+
 @app.get("/health")
 async def health():
     """Health check."""

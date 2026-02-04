@@ -64,13 +64,24 @@ class CrawlMethod(str, Enum):
 
 
 class ArticleStatus(str, Enum):
-    """Article processing status."""
+    """Article processing status - tracks pipeline progression.
+
+    Flow: CRAWLED → UNIQUE → EXTRACTED → PROCESSED → NOTIFIED
+
+    - CRAWLED: Article found and stored in DB
+    - UNIQUE: Passed deduplication (not a duplicate URL/title/DOI)
+    - EXTRACTED: Full text successfully extracted
+    - PROCESSED: LLM summarization and classification complete
+    - NOTIFIED: Sent to Slack channel
+    - FILTERED_OUT: Excluded by quality filter (won't be processed)
+    - FAILED: Error during processing (can be retried)
+    """
     CRAWLED = "crawled"
-    DEDUPLICATED = "deduplicated"
-    FILTERED = "filtered"
+    UNIQUE = "unique"
+    EXTRACTED = "extracted"      # Full text extracted
+    PROCESSED = "processed"      # LLM summarized and classified
+    NOTIFIED = "notified"        # Sent to Slack
     FILTERED_OUT = "filtered_out"
-    PROCESSED = "processed"
-    NOTIFIED = "notified"
     FAILED = "failed"
 
 
@@ -262,74 +273,188 @@ class DailyDigest(BaseModel):
 
 
 # Topic keyword mappings for classification
+# Project 1: Preventing key diseases impacting physical, cognitive and emotional health
+# Project 2: Leveraging behavioural protocols for improving healthspan
+# Project 3: Leveraging nutritional protocols for improving healthspan
+# Project 4: Key government interventions for promoting preventive approaches to public health
+# Project 5: Preparing youth in schools and colleges for improved future healthspan
+
 PROJECT_KEYWORDS = {
     ProjectArea.DISEASE_PREVENTION: {
-        "atherosclerosis": ["heart", "atherosclerosis", "plaque", "lipid", "calcification", "cholesterol", 
-                           "LDL", "HDL", "endothelial", "statin", "pcsk9", "lipoprotein", "ApoB", "ApoA",
-                           "triglyceride", "coronary", "cardiology"],
-        "diabetes": ["insulin", "glucose", "beta cell", "glp-1", "metformin", "hyperinsulinemia", 
-                    "prediabetes", "hba1c", "c-peptide", "type 2 diabetes"],
-        "metabolic": ["blood pressure", "liver", "fatty liver", "kidney", "cirrhosis", "fibrosis",
-                     "albuminuria", "creatinine", "hypertension", "NAFLD", "DKD"],
-        "cancer": ["carcinogenic", "tumor", "immunotherapy", "leukocytes", "genetic instability",
-                  "genomic instability", "t-cell", "oncogenes", "oncologist"],
-        "musculoskeletal": ["muscles", "joints", "bones", "sarcopenia", "osteoporosis", "bone mass",
-                           "muscle mass", "cartilage", "tendon", "ligament", "myokines", "osteoblast",
-                           "osteoclast", "orthopedic"],
-        "neurodegenerative": ["dementia", "parkinson", "alzheimer", "huntington", "brain", 
-                             "neurotransmitters", "cortex", "lobe", "memory", "motor", "nervous system",
-                             "neuroinflammation", "lewy bodies"],
-        "mental_health": ["anxiety", "depression", "mood", "brain", "endocrine", "psychology",
-                         "serotonin", "dopamine", "stress"],
-        "foundational": ["immune system", "immunity", "gut microbiome", "microbiota", "skin barrier",
-                        "retina", "teeth", "oral microbiome", "gut", "oral", "skin", "eye", "ear"],
+        "Preventing Atherosclerotic Heart Disease": [
+            "heart", "atherosclerosis", "plaque", "lipid", "calcification", "cholesterol",
+            "LDL", "HDL", "endothelial dysfunction", "statin", "pcsk9", "inhibitor",
+            "lipoprotein", "ApoB", "ApoA", "triglyceride", "coronary artery", "cardiology"
+        ],
+        "Preventing Type 2 Diabetes and Insulin Resistance": [
+            "insulin", "glucose", "beta cell", "glp-1", "metformin", "hyperinsulinemia",
+            "prediabetes", "hba1c", "c-peptide", "type 2 diabetes", "insulin resistance"
+        ],
+        "Preventing Other Key Metabolic Diseases": [
+            "blood pressure", "liver", "fatty liver", "kidney", "cirrhosis", "fibrosis",
+            "albuminuria", "creatinine", "hypertension", "NAFLD", "DKD", "diabetology"
+        ],
+        "Preventing Cancers": [
+            "carcinogenic", "tumor", "immunotherapy", "leukocytes", "genetic instability",
+            "genomic instability", "t-cell", "oncogenes", "oncologist", "cancer"
+        ],
+        "Preventing Musculoskeletal Diseases": [
+            "muscles", "joints", "bones", "sarcopenia", "osteoporosis", "bone mass",
+            "muscle mass", "body mineral density", "cartilage", "tendon", "ligament",
+            "myokines", "type 1 muscle fibres", "type 2 muscle fibres", "osteoblast",
+            "osteoclast", "gait mechanics", "orthopedic"
+        ],
+        "Preventing Neurodegenerative Diseases": [
+            "dementia", "parkinson", "alzheimer", "huntington", "brain", "neurotransmitters",
+            "cortex", "lobe", "memory", "motor", "nervous system", "neuroinflammation",
+            "lewy bodies"
+        ],
+        "Preventing Mental Health Conditions": [
+            "anxiety", "depression", "mood", "brain", "endocrine", "neurotransmitters",
+            "psychology", "serotonin", "dopamine", "stress", "mental health"
+        ],
+        "Maintaining Foundational Health": [
+            "immune system", "innate immunity", "adaptive immunity", "gut microbiome",
+            "microbiota", "skin barrier", "retina", "teeth", "tongue", "oral microbiome",
+            "immunity", "gut", "oral", "skin", "eye", "ear"
+        ],
     },
     ProjectArea.BEHAVIORAL_PROTOCOLS: {
-        "cardiovascular_exercise": ["aerobic", "anaerobic", "heart rate", "endurance", "cardiac output"],
-        "resistance_training": ["hypertrophy", "muscle", "strength", "fast twitch", "resistance"],
-        "stability_mobility": ["balance", "flexibility", "motor coordination", "yoga", "mobility"],
-        "sleep": ["circadian rhythm", "REM", "non-REM", "sleep architecture", "chronotype", 
-                 "slow wave", "sleep environment"],
-        "meditation": ["breathing", "breathwork", "meditation", "mindfulness"],
-        "emerging": ["naturotherapy", "heat exposure", "cold exposure", "infrared", "cryotherapy",
-                    "HBOT", "hydrotherapy", "sauna", "acupuncture"],
-        "risky_behaviors": ["tobacco", "smoking", "vaping", "alcohol", "drugs", "digital addiction",
-                           "opioids", "nicotine", "addiction"],
+        "Using Cardiovascular Exercises": [
+            "aerobic training", "anaerobic exercise", "heart rate", "heart activity",
+            "endurance", "cardiac output", "cardiovascular"
+        ],
+        "Using Resistance Training Exercises": [
+            "hypertrophy", "muscle", "strength", "fast twitch", "resistance training",
+            "weight training"
+        ],
+        "Using Stability and Mobility Exercises": [
+            "balance", "flexibility", "motor coordination", "yoga", "stability", "mobility"
+        ],
+        "Sleep": [
+            "circadian rhythm", "REM", "non-REM", "sleep architecture", "chronotype",
+            "slow wave", "sleep environment", "sleep"
+        ],
+        "Meditation, Breathwork and Related Practices": [
+            "breathing", "breathwork", "meditation", "mindfulness"
+        ],
+        "Emerging Behavioural Protocols": [
+            "naturotherapy", "heat exposure", "cold exposure", "infra-red exposure",
+            "cryotherapy", "HBOT", "hydrotherapy", "sauna", "acupuncture"
+        ],
+        "Risky Behaviours": [
+            "tobacco", "smoking", "vaping", "alcohol", "drugs", "digital addiction",
+            "opioids", "nicotine", "addiction", "dopamine"
+        ],
     },
     ProjectArea.NUTRITIONAL_PROTOCOLS: {
-        "protein": ["amino acid", "plant protein", "animal protein", "whey", "protein"],
-        "carbohydrates": ["glycemic index", "simple carbs", "complex carbs", "fructose", "sucrose",
-                         "refined carbs", "starch", "sugar"],
-        "fats": ["saturated fat", "unsaturated fat", "PUFA", "MUFA", "omega-6", "trans fat", "oils"],
-        "hydration": ["electrolyte", "water", "sodium", "osmosis", "fluids", "mineral absorption",
-                     "dehydration"],
-        "diets": ["fasting", "mediterranean", "low-carb", "vegan", "vegetarian", "intermittent",
-                 "keto", "paleo"],
-        "micronutrients": ["vitamin", "mineral", "iron", "calcium", "multivitamin"],
-        "supplements": ["omega-3", "fibre", "magnesium", "creatine", "NAD", "ashwagandha", "herbal",
-                       "food fortification"],
+        "Protein": [
+            "amino acid", "plant protein", "animal protein", "whey", "protein"
+        ],
+        "Sugar and Carbohydrates": [
+            "glycemic index", "simple carbs", "complex carbs", "fructose", "sucrose",
+            "refined carbs", "starch", "sugar", "carbohydrates"
+        ],
+        "Fats and Oils": [
+            "saturated fat", "unsaturated fat", "PUFA", "MUFA", "omega-6", "trans fat",
+            "oils", "fats"
+        ],
+        "Hydration and Salts": [
+            "electrolyte", "water", "sodium", "osmosis", "fluids", "mineral absorption",
+            "dehydration", "hydration"
+        ],
+        "Comparison of Popular Diets and Dietary Techniques": [
+            "fasting", "mediterranean", "low-carb", "vegan", "vegetarian", "intermittent",
+            "keto", "paleo", "diet"
+        ],
+        "Micronutrients and Conventional Supplements": [
+            "vitamin", "mineral", "gummies", "iron", "calcium", "multivitamin"
+        ],
+        "Emerging Supplements": [
+            "omega-3", "fibre", "magnesium", "creatine", "NAD", "ashwagandha", "herbal",
+            "food fortification", "supplements"
+        ],
     },
     ProjectArea.GOVERNMENT_INTERVENTIONS: {
-        "food_safety": ["food labelling", "food scoring", "food adulteration", "food safety", 
-                       "food quality"],
-        "air_pollution": ["PM 2.5", "PM 10", "COPD", "ambient air", "emission", "alveoli",
-                         "hazardous air", "respiratory"],
-        "water_pollution": ["waterborne", "fecal", "e. coli", "diarrhea", "water pollution",
-                           "gastrointestinal"],
-        "toxins": ["microplastics", "PFAs", "phthalates", "heavy metals", "bioaccumulation",
-                  "toxicology"],
-        "communications": ["health literacy", "health communication", "behavioral change", "nudge",
-                          "campaigns", "outreach", "mobilisation"],
-        "funding": ["insurance", "funding", "investment", "finance", "budget", 
-                   "public health expenditure", "OOPE"],
-        "workforce": ["preventive care training", "workforce training", "curriculum", 
-                     "capacity building"],
+        "Improving Nutritional Standards and Food Safety": [
+            "food labelling", "food scoring", "food adulteration", "food safety", "food quality"
+        ],
+        "Preventing Respiratory Infections by Tackling Air Pollution": [
+            "PM 2.5", "PM 10", "COPD", "ambient air", "emission", "alveoli",
+            "hazardous air", "air pollution", "respiratory"
+        ],
+        "Preventing Gastrointestinal Infections by Tackling Water Pollution": [
+            "waterborne", "fecal", "e. coli", "diarrhea", "water pollution",
+            "gastrointestinal"
+        ],
+        "Reducing Exposure to Key Toxins": [
+            "microplastics", "PFAs", "phthalates", "heavy metals", "bioaccumulation",
+            "toxicology", "toxins"
+        ],
+        "Driving Mass Behavioural Change Through Effective Public Health Communications": [
+            "health literacy", "health communication", "behavioural change", "nudge",
+            "campaigns", "outreach", "mobilisation"
+        ],
+        "Increasing Funding of Preventive Approaches to Public Health": [
+            "insurance", "funding", "investment", "finance", "budget",
+            "public health expenditure", "OOPE"
+        ],
+        "Adapting Healthcare Professional Talent Base": [
+            "preventive care training", "workforce training", "curriculum",
+            "capacity building"
+        ],
     },
     ProjectArea.YOUTH_HEALTH: {
-        "general": ["school", "students", "college", "adolescent health", "mental health", "obesity",
-                   "child nutrition", "development", "health curriculum", "school intervention",
-                   "college intervention", "student wellness", "campus health", "youth health"],
+        "School and College Health Programs": [
+            "school", "students", "college", "adolescent health", "mental health", "obesity",
+            "child nutrition", "development", "health curriculum", "school intervention",
+            "college intervention", "student wellness", "campus health", "youth health governance"
+        ],
+        "Regional Youth Health Initiatives": [
+            "India", "USA", "UK", "EU", "Australia", "Scandinavia", "Japan", "Singapore",
+            "China", "Canada", "South Korea", "France", "Germany"
+        ],
     },
+}
+
+# Human-readable sub-topic display names (for Slack tags)
+SUB_TOPIC_TAGS = {
+    # Disease Prevention
+    "Preventing Atherosclerotic Heart Disease": "Heart Disease",
+    "Preventing Type 2 Diabetes and Insulin Resistance": "Diabetes",
+    "Preventing Other Key Metabolic Diseases": "Metabolic Diseases",
+    "Preventing Cancers": "Cancer",
+    "Preventing Musculoskeletal Diseases": "Musculoskeletal",
+    "Preventing Neurodegenerative Diseases": "Neurodegenerative",
+    "Preventing Mental Health Conditions": "Mental Health",
+    "Maintaining Foundational Health": "Foundational Health",
+    # Behavioral Protocols
+    "Using Cardiovascular Exercises": "Cardio Exercise",
+    "Using Resistance Training Exercises": "Resistance Training",
+    "Using Stability and Mobility Exercises": "Stability/Mobility",
+    "Sleep": "Sleep",
+    "Meditation, Breathwork and Related Practices": "Meditation/Breathwork",
+    "Emerging Behavioural Protocols": "Emerging Protocols",
+    "Risky Behaviours": "Risky Behaviours",
+    # Nutritional Protocols
+    "Protein": "Protein",
+    "Sugar and Carbohydrates": "Carbohydrates",
+    "Fats and Oils": "Fats/Oils",
+    "Hydration and Salts": "Hydration",
+    "Comparison of Popular Diets and Dietary Techniques": "Diets",
+    "Micronutrients and Conventional Supplements": "Micronutrients",
+    "Emerging Supplements": "Supplements",
+    # Government Interventions
+    "Improving Nutritional Standards and Food Safety": "Food Safety",
+    "Preventing Respiratory Infections by Tackling Air Pollution": "Air Pollution",
+    "Preventing Gastrointestinal Infections by Tackling Water Pollution": "Water Pollution",
+    "Reducing Exposure to Key Toxins": "Toxins",
+    "Driving Mass Behavioural Change Through Effective Public Health Communications": "Public Health Comms",
+    "Increasing Funding of Preventive Approaches to Public Health": "Health Funding",
+    "Adapting Healthcare Professional Talent Base": "Healthcare Workforce",
+    # Youth Health
+    "School and College Health Programs": "School/College Health",
+    "Regional Youth Health Initiatives": "Regional Initiatives",
 }
 
 # High-quality source indicators

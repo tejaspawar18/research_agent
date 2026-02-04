@@ -200,29 +200,52 @@ def has_bad_science_indicators(text: str) -> bool:
 
 
 def parse_date_string(date_str: str) -> Optional[datetime]:
-    """Parse various date formats."""
+    """Parse various date formats including RSS/Atom feed formats."""
     if not date_str:
         return None
-    
+
+    date_str = date_str.strip()
+
+    # Try RFC 2822 format first (common in RSS feeds)
+    # e.g. "Mon, 03 Feb 2026 12:00:00 GMT"
+    try:
+        from email.utils import parsedate_to_datetime
+        return parsedate_to_datetime(date_str)
+    except (ValueError, TypeError):
+        pass
+
+    # Try ISO 8601 with timezone offset (e.g. "2026-02-03T12:00:00+00:00")
+    try:
+        # Handle timezone-aware ISO strings
+        if '+' in date_str[10:] or date_str.endswith('Z'):
+            clean = date_str.replace('Z', '+00:00')
+            return datetime.fromisoformat(clean)
+    except (ValueError, TypeError, IndexError):
+        pass
+
     formats = [
-        "%Y-%m-%d",
         "%Y-%m-%dT%H:%M:%S",
-        "%Y-%m-%dT%H:%M:%SZ",
-        "%Y-%m-%dT%H:%M:%S.%fZ",
+        "%Y-%m-%dT%H:%M:%S.%f",
+        "%Y-%m-%d",
         "%Y/%m/%d",
         "%d-%m-%Y",
         "%d/%m/%Y",
         "%B %d, %Y",
         "%b %d, %Y",
+        "%d %B %Y",
+        "%d %b %Y",
+        "%Y-%m",
+        "%B %Y",
+        "%b %Y",
         "%Y",
     ]
-    
+
     for fmt in formats:
         try:
-            return datetime.strptime(date_str.strip(), fmt)
+            return datetime.strptime(date_str, fmt)
         except (ValueError, AttributeError):
             continue
-    
+
     return None
 
 

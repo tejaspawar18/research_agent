@@ -12,6 +12,7 @@ sys.path.insert(0, '/app')
 from shared.models import Article
 from rss_crawler import RSSCrawler
 from html_crawler import HTMLCrawler
+from pubmed_crawler import PubMedCrawler
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +49,18 @@ class AdaptiveCrawler:
             List of Article objects
         """
         articles = []
+
+        # Debug logging
+        logger.info(f"Crawling {self.source.name}, crawl_method: {getattr(self.source, 'crawl_method', 'NOT SET')}")
+
+        # Method 0: Try PubMed API if crawl_method is pubmed_api
+        if hasattr(self.source, 'crawl_method') and self.source.crawl_method == 'pubmed_api':
+            logger.info(f"Using PubMed API for {self.source.name}")
+            articles = await self._try_pubmed_api_crawl(max_articles)
+            if articles:
+                logger.info(f"✓ PubMed API crawl succeeded for {self.source.name}: {len(articles)} articles")
+                return articles
+            logger.warning(f"PubMed API returned no articles for {self.source.name}")
 
         # Method 1: Try RSS feed first (fast and reliable)
         if self.source.rss_url:
@@ -176,4 +189,15 @@ class AdaptiveCrawler:
 
         except Exception as e:
             logger.debug(f"HTML crawl failed for {self.source.name}: {e}")
+            return []
+
+    async def _try_pubmed_api_crawl(self, max_articles: int) -> List[Article]:
+        """Try PubMed E-utilities API crawling."""
+        try:
+            self.attempts.append("PubMed API")
+            crawler = PubMedCrawler(self.source)
+            articles = await crawler.crawl(max_articles)
+            return articles if articles else []
+        except Exception as e:
+            logger.debug(f"PubMed API crawl failed for {self.source.name}: {e}")
             return []

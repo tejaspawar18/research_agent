@@ -2,6 +2,8 @@
 from .database import (
     ScyllaDBManager,
     RedisManager,
+    KafkaManager,
+    S3Manager,
     initialize_schema,
     SCYLLA_SCHEMA,
 )
@@ -31,6 +33,8 @@ __all__ = [
     # Database
     "ScyllaDBManager",
     "RedisManager",
+    "KafkaManager",
+    "S3Manager",
     "initialize_schema",
     "SCYLLA_SCHEMA",
     

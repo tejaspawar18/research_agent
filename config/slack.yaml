@@ -1,8 +1,8 @@
 # Slack Channel Configuration
 channels:
-  disease_prevention: "#disease-prevention"
-  behavioral_protocols: "#behavioral-protocols"
-  nutritional_protocols: "#nutritional-protocols"
-  government_interventions: "#government-interventions"
-  youth_health: "#youth-health"
-  general: "#research-general"
+  disease_prevention: "#disease-prevention" #C0AD8AMLDMW
+  behavioral_protocols: "#behavioral-protocols" #C0ACJPLKU86 
+  nutritional_protocols: "#nutritional-protocols" #C0ACQDJD7N0
+  government_interventions: "#government-interventions" #C0ACZP45N73
+  youth_health: "#youth-health" #C0ACHCYJJG5
+  general: "#research-general" #C0ACZPB8Q4R

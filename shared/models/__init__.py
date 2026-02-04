@@ -23,6 +23,7 @@ from .article import (
     
     # Constants
     PROJECT_KEYWORDS,
+    SUB_TOPIC_TAGS,
     HIGH_QUALITY_SOURCES,
     BAD_SCIENCE_INDICATORS,
 )
@@ -35,7 +36,7 @@ __all__ = [
     "SourceType",
     "CrawlMethod",
     "ArticleStatus",
-    
+
     # Models
     "Author",
     "SourceConfig",
@@ -48,9 +49,10 @@ __all__ = [
     "LLMSummaryResult",
     "SlackMessage",
     "DailyDigest",
-    
+
     # Constants
     "PROJECT_KEYWORDS",
+    "SUB_TOPIC_TAGS",
     "HIGH_QUALITY_SOURCES",
     "BAD_SCIENCE_INDICATORS",
 ]
