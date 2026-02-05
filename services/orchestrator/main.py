@@ -386,6 +386,10 @@ class PipelineOrchestrator:
                     if hasattr(article, 'pmid') and article.pmid:
                         extraction_data["pmid"] = article.pmid
 
+                    # Add DOI if available (enables Unpaywall + DOI resolution)
+                    if article.doi:
+                        extraction_data["doi"] = article.doi
+
                     # Add PDF URL if available
                     if hasattr(article, 'pdf_url') and article.pdf_url:
                         extraction_data["pdf_url"] = article.pdf_url
@@ -522,16 +526,36 @@ class PipelineOrchestrator:
         notified = 0
         MAX_NOTIFY = 40
 
-        # Sort by evidence level (highest first) and cap at MAX_NOTIFY
-        sorted_articles = sorted(articles, key=lambda a: (a.evidence_level or 0), reverse=True)[:MAX_NOTIFY]
+        # Filter out articles without a specific project area (safety net)
+        relevant_articles = [
+            a for a in articles
+            if a.project_area and a.project_area != "general"
+            and (a.relevance_score is None or a.relevance_score >= 20)
+        ]
+        filtered_count = len(articles) - len(relevant_articles)
+        if filtered_count:
+            logger.info(f"Filtered out {filtered_count} articles with no specific project area or low relevance")
 
-        if len(articles) > MAX_NOTIFY:
-            logger.info(f"Capping notifications at {MAX_NOTIFY} articles (total: {len(articles)})")
+        # Sort by evidence level (highest first) and cap at MAX_NOTIFY
+        sorted_articles = sorted(relevant_articles, key=lambda a: (a.evidence_level or 0), reverse=True)[:MAX_NOTIFY]
+
+        if len(relevant_articles) > MAX_NOTIFY:
+            logger.info(f"Capping notifications at {MAX_NOTIFY} articles (total: {len(relevant_articles)})")
 
         try:
             async with httpx.AsyncClient(timeout=60.0) as client:
                 for article in sorted_articles:
-                    area = article.project_area or "general"
+                    # Skip articles already notified (Redis guard against duplicates)
+                    notify_key = f"notified:{article.article_id}"
+                    try:
+                        already_notified = await redis_manager.exists(notify_key)
+                        if already_notified:
+                            logger.debug(f"Skipping already-notified article: {article.title[:50]}")
+                            continue
+                    except Exception:
+                        pass  # Redis unavailable - proceed with notification
+
+                    area = article.project_area
                     channel = config.slack.channels.get(area, "#research-general")
 
                     try:
@@ -547,6 +571,11 @@ class PipelineOrchestrator:
                             result = response.json()
                             if result.get("success"):
                                 article.status = ArticleStatus.NOTIFIED
+                                # Mark as notified in Redis (permanent) to prevent duplicates
+                                try:
+                                    await redis_manager.set(notify_key, "1")
+                                except Exception:
+                                    pass
                                 try:
                                     db_manager.update_article_status(
                                         source_id=article.source_id,

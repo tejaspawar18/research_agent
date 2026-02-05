@@ -56,6 +56,50 @@ class ExtractionResponse(BaseModel):
     error: Optional[str] = None
 
 
+async def _resolve_doi_url(doi: str) -> Optional[str]:
+    """
+    Resolve a DOI to its landing page URL by following the doi.org redirect.
+    Returns the final URL after redirect, or None if resolution fails.
+    """
+    if not doi:
+        return None
+
+    doi_url = f"https://doi.org/{doi}"
+
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.head(
+                doi_url,
+                timeout=aiohttp.ClientTimeout(total=15),
+                allow_redirects=True,
+                headers={"User-Agent": "PreventiveHealthPipeline/1.0"},
+            ) as response:
+                if response.status == 200:
+                    final_url = str(response.url)
+                    logger.info(f"DOI {doi} resolved to: {final_url}")
+                    return final_url
+    except Exception as e:
+        logger.debug(f"DOI resolution via HEAD failed for {doi}: {e}")
+
+    # Fallback: try GET with redirect follow
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(
+                doi_url,
+                timeout=aiohttp.ClientTimeout(total=15),
+                allow_redirects=True,
+                headers={"User-Agent": "PreventiveHealthPipeline/1.0"},
+            ) as response:
+                if response.status == 200:
+                    final_url = str(response.url)
+                    logger.info(f"DOI {doi} resolved to: {final_url}")
+                    return final_url
+    except Exception as e:
+        logger.debug(f"DOI resolution via GET failed for {doi}: {e}")
+
+    return None
+
+
 async def _unpaywall_lookup(doi: str) -> Optional[str]:
     """
     Use Unpaywall API to find open access version of a paper.
@@ -112,7 +156,7 @@ async def extract_fulltext(request: ExtractionRequest):
     2. PDF extraction (if pdf_url provided)
     3. HTML extraction from original URL
     4. Unpaywall lookup for open access version (if DOI provided)
-    5. HTML extraction from Unpaywall OA URL
+    5. DOI URL resolution - resolve doi.org to publisher page (if DOI provided)
 
     You can force a specific method by setting the method parameter.
     """
@@ -172,6 +216,16 @@ async def extract_fulltext(request: ExtractionRequest):
                         method_used = 'unpaywall'
                         if not published_date:
                             published_date = pub_date_oa
+
+            # Method 5: DOI URL resolution - resolve doi.org redirect to publisher page
+            if not full_text and request.doi:
+                doi_resolved_url = await _resolve_doi_url(request.doi)
+                if doi_resolved_url and doi_resolved_url != request.url:
+                    full_text, pub_date_doi = await HTMLExtractor.extract_with_date(doi_resolved_url)
+                    if full_text:
+                        method_used = 'doi_resolved'
+                        if not published_date:
+                            published_date = pub_date_doi
 
             # If we got text but no date from non-HTML methods, try extracting date from HTML
             if full_text and not published_date and method_used in ('pmc', 'pdf'):

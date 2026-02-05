@@ -36,22 +36,38 @@ redis_manager = RedisManager()
 
 
 def clean_json_response(response_text: str) -> str:
-    """Clean LLM response for JSON parsing."""
+    """Clean LLM response for JSON parsing.
+
+    Handles: markdown code blocks, preamble text, control characters.
+    """
     text = response_text.strip()
+
     # Remove markdown code blocks
-    if text.startswith("```json"):
-        text = text[7:]
-    if text.startswith("```"):
-        text = text[3:]
-    if text.endswith("```"):
-        text = text[:-3]
+    if "```json" in text:
+        text = text.split("```json", 1)[1]
+    if "```" in text:
+        # Take content before the closing ```
+        parts = text.split("```")
+        text = parts[0]
     text = text.strip()
-    # Remove control characters that break JSON parsing
-    text = re.sub(r'[\x00-\x1f\x7f]', ' ', text)
-    # Fix common JSON issues
-    text = text.replace('\n', '\\n').replace('\r', '\\r').replace('\t', '\\t')
-    # But restore escaped newlines inside strings that were double-escaped
-    text = text.replace('\\\\n', '\\n')
+
+    # Extract JSON object from surrounding text (LLMs often add preamble/postamble)
+    # Find the first { and last } to extract the JSON object
+    first_brace = text.find('{')
+    last_brace = text.rfind('}')
+    if first_brace != -1 and last_brace != -1 and last_brace > first_brace:
+        text = text[first_brace:last_brace + 1]
+
+    # Replace actual newlines/tabs with spaces (they're outside JSON strings)
+    # But preserve escaped \n sequences (literal backslash-n in JSON strings)
+    text = text.replace('\r\n', ' ').replace('\r', ' ').replace('\n', ' ').replace('\t', ' ')
+
+    # Remove other control characters
+    text = re.sub(r'[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]', '', text)
+
+    # Collapse multiple spaces
+    text = re.sub(r' {2,}', ' ', text)
+
     return text
 
 
@@ -145,7 +161,7 @@ class LLMProvider:
     async def complete(
         self,
         messages: List[Dict[str, str]],
-        max_tokens: int = 1500,
+        max_tokens: int = 16000,
         temperature: float = 0.3,
     ) -> str:
         """Generate completion."""
@@ -227,7 +243,7 @@ class LLMProvider:
                 })
 
         # Use gemini-2.0-flash model
-        model = self.model or "gemini-2.0-flash"
+        model = self.model or "gemini-2.5-flash"
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={self.api_key}"
 
         payload = {
@@ -235,6 +251,9 @@ class LLMProvider:
             "generationConfig": {
                 "maxOutputTokens": max_tokens,
                 "temperature": temperature,
+                "thinkingConfig": {
+                    "thinkingBudget": 1024,
+                },
             }
         }
 
@@ -399,76 +418,57 @@ class ArticleClassifier:
     CLASSIFY_PROMPT = """You are a medical research classifier specializing in preventive health.
 
 ## CLASSIFICATION TASK
-Classify this article into ONE project area and ONE specific sub-topic.
+Determine if this article is relevant to preventive health research. If it is, classify it into ONE project area and ONE specific sub-topic. If it is NOT relevant, reject it.
+
+CRITICAL: Only classify articles that are genuinely about human health, disease prevention, nutrition, exercise, public health policy, or medical research. Articles about technology (computing, engineering, physics, materials science, etc.) that merely mention health as a speculative future application are NOT relevant. Be strict.
 
 ## PROJECT AREAS AND SUB-TOPICS
 
 **PROJECT 1: disease_prevention** - Preventing key diseases impacting physical, cognitive and emotional health
 Sub-topics:
-- "Preventing Atherosclerotic Heart Disease" → Keywords: heart, atherosclerosis, plaque, lipid, calcification, cholesterol, LDL, HDL, endothelial dysfunction, statin, pcsk9, lipoprotein, ApoB, ApoA, triglyceride, coronary artery, cardiology
-- "Preventing Type 2 Diabetes and Insulin Resistance" → Keywords: insulin, glucose, beta cell, glp-1, metformin, hyperinsulinemia, prediabetes, hba1c, c-peptide
-- "Preventing Other Key Metabolic Diseases" → Keywords: blood pressure, liver, fatty liver, kidney, cirrhosis, fibrosis, albuminuria, creatinine, hypertension, NAFLD, DKD
-- "Preventing Cancers" → Keywords: carcinogenic, tumor, immunotherapy, leukocytes, genetic instability, genomic instability, t-cell, oncogenes, oncologist
-- "Preventing Musculoskeletal Diseases" → Keywords: muscles, joints, bones, sarcopenia, osteoporosis, bone mass, muscle mass, body mineral density, cartilage, tendon, ligament, myokines, osteoblast, osteoclast, gait mechanics, orthopedic
-- "Preventing Neurodegenerative Diseases" → Keywords: dementia, parkinson's, alzheimer's, huntington's, brain, neurotransmitters, cortex, lobe, memory, motor, nervous system, neuroinflammation, lewy bodies
-- "Preventing Mental Health Conditions" → Keywords: anxiety, depression, mood, brain, endocrine, neurotransmitters, psychology, serotonin, dopamine, stress
-- "Maintaining Foundational Health" → Keywords: immune system, innate immunity, adaptive immunity, gut microbiome, microbiota, skin barrier, retina, teeth, tongue, oral microbiome, immunity, gut, oral, skin, eye, ear
+- "Preventing Atherosclerotic Heart Disease" - cardiovascular disease, atherosclerosis, cholesterol, lipids, statins, coronary artery disease
+- "Preventing Type 2 Diabetes and Insulin Resistance" - insulin, glucose, beta cell, GLP-1, metformin, HbA1c, prediabetes
+- "Preventing Other Key Metabolic Diseases" - hypertension, fatty liver, kidney disease, NAFLD, metabolic syndrome
+- "Preventing Cancers" - carcinogenesis, tumor, immunotherapy, oncology, cancer screening, cancer prevention
+- "Preventing Musculoskeletal Diseases" - osteoporosis, sarcopenia, bone density, joint health, orthopedic prevention
+- "Preventing Neurodegenerative Diseases" - dementia, Alzheimer's, Parkinson's, neuroinflammation, cognitive decline prevention
+- "Preventing Mental Health Conditions" - anxiety, depression, stress, mood disorders, psychological interventions
+- "Maintaining Foundational Health" - immune system, gut microbiome, oral health, skin health, vision, hearing
 
-**PROJECT 2: behavioral_protocols** - Leveraging behavioural protocols for improving healthspan
+**PROJECT 2: behavioral_protocols** - Behavioural protocols for improving healthspan
 Sub-topics:
-- "Using Cardiovascular Exercises" → Keywords: aerobic training, anaerobic exercise, heart rate, heart activity, endurance, cardiac output
-- "Using Resistance Training Exercises" → Keywords: hypertrophy, muscle, strength, fast twitch
-- "Using Stability and Mobility Exercises" → Keywords: balance, flexibility, motor coordination, yoga
-- "Sleep" → Keywords: circadian rhythm, REM, Non-REM, sleep architecture, chronotype, slow wave, sleep environment
-- "Meditation, Breathwork and Related Practices" → Keywords: breathing, breathwork, meditation, mindfulness
-- "Emerging Behavioural Protocols" → Keywords: naturotherapy, heat exposure, cold exposure, infra-red exposure, cryotherapy, HBOT, hydrotherapy, sauna, acupuncture
-- "Risky Behaviours" → Keywords: tobacco, smoking, vaping, alcohol, drugs, digital addiction, opioids, nicotine, addiction, dopamine
+- "Using Cardiovascular Exercises" - aerobic training, endurance exercise, cardiac fitness
+- "Using Resistance Training Exercises" - strength training, hypertrophy, resistance exercise
+- "Using Stability and Mobility Exercises" - balance, flexibility, yoga, mobility training
+- "Sleep" - circadian rhythm, sleep architecture, sleep quality, insomnia
+- "Meditation, Breathwork and Related Practices" - meditation, mindfulness, breathing exercises
+- "Emerging Behavioural Protocols" - cold exposure, heat therapy, cryotherapy, sauna, acupuncture
+- "Risky Behaviours" - smoking, alcohol, substance abuse, addiction, vaping
 
-**PROJECT 3: nutritional_protocols** - Leveraging nutritional protocols for improving healthspan
+**PROJECT 3: nutritional_protocols** - Nutritional protocols for improving healthspan
 Sub-topics:
-- "Protein" → Keywords: amino acid, plant protein, animal protein, whey
-- "Sugar and Carbohydrates" → Keywords: glycemic index, simple carbs, complex carbs, fructose, sucrose, refined carbs, starch
-- "Fats and Oils" → Keywords: saturated fat, unsaturated fats, PUFA, MUFA, omega-6, trans fats
-- "Hydration and Salts" → Keywords: electrolyte, water, sodium, osmosis, fluids, mineral absorption, dehydration
-- "Comparison of Popular Diets and Dietary Techniques" → Keywords: fasting, mediterranean, low-carb, vegan, vegetarian, intermittent
-- "Micronutrients and Conventional Supplements" → Keywords: vitamin, mineral, gummies, iron, calcium, multivitamin
-- "Emerging Supplements" → Keywords: omega-3, fibre, magnesium, creatine, NAD, ashwagandha, herbal, food fortification
+- "Protein" - amino acids, dietary protein, protein supplementation
+- "Sugar and Carbohydrates" - glycemic index, carbohydrate metabolism, sugar intake
+- "Fats and Oils" - dietary fat, omega fatty acids, saturated fat, trans fat
+- "Hydration and Salts" - electrolytes, hydration, mineral balance
+- "Comparison of Popular Diets and Dietary Techniques" - fasting, mediterranean diet, keto, vegan
+- "Micronutrients and Conventional Supplements" - vitamins, minerals, supplementation
+- "Emerging Supplements" - omega-3, magnesium, creatine, NAD, herbal supplements
 
-**PROJECT 4: government_interventions** - Key government interventions for promoting preventive approaches to public health
+**PROJECT 4: government_interventions** - Government interventions for preventive public health
 Sub-topics:
-- "Improving Nutritional Standards and Food Safety" → Keywords: food labelling, food scoring, food adulteration, food safety, food quality
-- "Preventing Respiratory Infections by Tackling Air Pollution" → Keywords: PM 2.5, PM 10, COPD, ambient air, emission, alveoli, hazardous air
-- "Preventing Gastrointestinal Infections by Tackling Water Pollution" → Keywords: waterborne, fecal, e. coli, diarrhea
-- "Reducing Exposure to Key Toxins" → Keywords: microplastics, PFAs, phthalates, heavy metals, bioaccumulation, toxicology
-- "Driving Mass Behavioural Change Through Effective Public Health Communications" → Keywords: health literacy, health communication, behavioural change, nudge, campaigns, outreach, mobilisation
-- "Increasing Funding of Preventive Approaches to Public Health" → Keywords: insurance, funding, investment, finance, budget, public health expenditure, OOPE
-- "Adapting Healthcare Professional Talent Base" → Keywords: preventive care training, workforce training, curriculum, capacity building
+- "Improving Nutritional Standards and Food Safety" - food labelling, food safety regulation
+- "Preventing Respiratory Infections by Tackling Air Pollution" - air quality, PM2.5, COPD prevention
+- "Preventing Gastrointestinal Infections by Tackling Water Pollution" - waterborne disease, water quality
+- "Reducing Exposure to Key Toxins" - microplastics, heavy metals, environmental toxins
+- "Driving Mass Behavioural Change Through Effective Public Health Communications" - health literacy, public health campaigns
+- "Increasing Funding of Preventive Approaches to Public Health" - health policy funding, public health investment
+- "Adapting Healthcare Professional Talent Base" - healthcare workforce, preventive care training
 
-**PROJECT 5: youth_health** - Preparing youth in schools and colleges for improved future healthspan
+**PROJECT 5: youth_health** - Preparing youth for improved future healthspan
 Sub-topics:
-- "School and College Health Programs" → Keywords: school, students, college, adolescent health, mental health, obesity, child nutrition, development, health curriculum, school intervention, college intervention, student wellness, campus health, youth health governance
-- "Regional Youth Health Initiatives" → Keywords: India, USA, UK, EU, Australia, Scandinavia, Japan, Singapore, China, Canada, South Korea, France, Germany
-
-## QUALITY GUARDRAILS (for confidence scoring)
-
-**HIGH PRIORITY (confidence 0.8-1.0):**
-- Peer-reviewed journals: Nature, Lancet, Cell, BMJ, JAHA, ScienceDirect, PubMed, IHME
-- Study types: Meta-analyses, systematic reviews, RCTs, large cohort studies
-- Adequate sample sizes: n > 150 observational, > 50 per RCT arm
-- Clear effect sizes, confidence intervals, p-values
-- Direct match with sub-topic tags
-
-**MEDIUM PRIORITY (confidence 0.5-0.8):**
-- Expert commentary from Harvard, Yale, MIT, Stanford, Peter Attia
-- Well-done observational studies, smaller human mechanistic studies
-- Translational animal studies with human implications
-- Related to preventive-health but indirectly
-
-**LOW PRIORITY (confidence 0.2-0.5):**
-- Non-peer-reviewed, opinion pieces, preprints
-- Cross-sectional claiming causation, case studies, small samples (n < 20)
-- Missing effect sizes or p-values
-- Not directly aligned with preventive-health tags
+- "School and College Health Programs" - school health interventions, adolescent health, student wellness
+- "Regional Youth Health Initiatives" - country-specific youth health programs
 
 ## ARTICLE TO CLASSIFY
 
@@ -476,12 +476,23 @@ Title: {title}
 Abstract: {abstract}
 
 ## RESPONSE FORMAT (JSON only)
+
+If the article IS relevant to preventive health:
 {{
+    "is_relevant": true,
     "project_area": "<one of: disease_prevention, behavioral_protocols, nutritional_protocols, government_interventions, youth_health>",
     "sub_topic": "<exact sub-topic name from list above>",
-    "confidence": <0.0-1.0 based on guardrails>,
-    "keywords": ["<matched keywords from article>"],
-    "priority_level": "<HIGH, MEDIUM, or LOW based on guardrails>"
+    "confidence": <0.0-1.0>,
+    "keywords": ["<matched health keywords from article>"]
+}}
+
+If the article is NOT relevant to preventive health (e.g. technology, engineering, physics, materials science, pure chemistry, computer science, astronomy, etc.):
+{{
+    "is_relevant": false,
+    "project_area": "general",
+    "sub_topic": "",
+    "confidence": 0.0,
+    "keywords": []
 }}"""
     
     def __init__(self, llm: LLMProvider):
@@ -491,17 +502,18 @@ Abstract: {abstract}
         """Classify article using LLM."""
         # First try keyword-based classification
         keyword_result = self._keyword_classify(article)
-        
+
+        # If keyword match is strong, use it directly
         if keyword_result.confidence >= 0.8:
             return keyword_result
-        
-        # Use LLM for uncertain cases
+
+        # Use LLM for all other cases (including low-keyword-match articles)
         try:
             prompt = self.CLASSIFY_PROMPT.format(
                 title=article.title,
                 abstract=truncate_text(article.abstract or "", 2000),
             )
-            
+
             response = await self.llm.complete(
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.2,
@@ -510,14 +522,24 @@ Abstract: {abstract}
             # Clean and parse JSON response
             response_text = clean_json_response(response)
             result = json.loads(response_text)
-            
+
+            # If LLM says article is not relevant, return with general/low confidence
+            if not result.get("is_relevant", True):
+                logger.info(f"LLM marked article as not relevant: {article.title[:60]}")
+                return LLMClassificationResult(
+                    project_area=ProjectArea.GENERAL,
+                    sub_topic="",
+                    confidence=0.0,
+                    keywords=[],
+                )
+
             return LLMClassificationResult(
                 project_area=ProjectArea(result.get("project_area", "general")),
                 sub_topic=result.get("sub_topic", ""),
                 confidence=result.get("confidence", 0.5),
                 keywords=result.get("keywords", []),
             )
-            
+
         except Exception as e:
             logger.error(f"LLM classification failed: {e}")
             return keyword_result
@@ -536,10 +558,10 @@ Abstract: {abstract}
                 matches = [kw for kw in keywords if kw.lower() in text]
                 score = len(matches)
 
-                # Boost score for exact phrase matches
+                # Boost score for multi-word phrase matches (more specific)
                 for kw in keywords:
                     if len(kw.split()) > 1 and kw.lower() in text:
-                        score += 2  # Multi-word phrases get bonus
+                        score += 2
 
                 if score > best_score:
                     best_score = score
@@ -547,15 +569,19 @@ Abstract: {abstract}
                     best_sub_topic = sub_topic
                     matched_keywords = matches
 
-        # Calculate confidence based on matches (scaled for new keyword structure)
+        # Require at least 2 keyword matches to classify via keywords alone
+        # Single keyword matches are too unreliable (e.g. "brain" or "water")
         if best_score >= 5:
             confidence = 0.9
         elif best_score >= 3:
             confidence = 0.7
-        elif best_score >= 1:
+        elif best_score >= 2:
             confidence = 0.5
         else:
-            confidence = 0.1
+            # Too few matches - not confident enough, will fall through to LLM
+            confidence = 0.2
+            best_area = ProjectArea.GENERAL
+            best_sub_topic = ""
 
         return LLMClassificationResult(
             project_area=best_area,
@@ -569,33 +595,42 @@ Abstract: {abstract}
 class ArticleSummarizer:
     """Generate summaries for preventive health articles."""
     
-    SUMMARIZE_PROMPT = """You are a preventive health research summarizer.
+    SUMMARIZE_PROMPT = """You are a preventive health research summarizer. Your job is to read an article and produce a clear, informative summary that highlights what matters for disease prevention and healthspan.
 
-Summarize this article focusing on:
-1. Main findings relevant to disease prevention
-2. Practical preventive implications
-3. Quality of evidence
+## ARTICLE
 
-Article Title: {title}
-Abstract: {abstract}
+Title: {title}
 Study Type: {study_type}
 Source Quality: {source_quality}
 
-Respond in JSON format only:
+{content_section}
+
+## INSTRUCTIONS
+
+Write a summary with 5-7 bullet points covering:
+- What the study investigated and why it matters for preventive health
+- Key results and effect sizes (if reported)
+- Practical preventive implications (what someone could do based on this)
+- Limitations or caveats
+- Quality of evidence
+
+Do NOT repeat the article title, journal name, DOI, or publication date in the summary. Focus on the actual scientific content and findings.
+
+## RESPONSE FORMAT (JSON only)
+
 {{
-    "summary": "<A single string containing 6-7 bullet points, each on a new line, starting with '- '>",
-    "key_findings": ["<finding 1>", "<finding 2>", "<finding 3>", "<finding 4>", "<finding 5>", "<finding 6>", "<finding 7>"],
-    "preventive_implications": "<what this means for prevention>",
+    "summary": "- Bullet point 1\\n- Bullet point 2\\n- Bullet point 3\\n- Bullet point 4\\n- Bullet point 5",
+    "key_findings": ["finding 1", "finding 2", "finding 3", "finding 4", "finding 5"],
+    "preventive_implications": "<what this means for prevention in 1-2 sentences>",
     "quality_assessment": "<brief assessment of evidence quality>",
     "relevance_score": <0-100 relevance to preventive health>
 }}
 
-IMPORTANT:
-- The "summary" field must be a STRING containing 6-7 bullet points, each starting with "- " on a new line
-- Example summary format: "- Point 1\n- Point 2\n- Point 3\n- Point 4\n- Point 5\n- Point 6\n- Point 7"
-- The "key_findings" array must contain 6-7 specific findings from the study
-- Always include the "relevance_score" as a number between 0-100
-- Focus on actionable preventive health insights"""
+RULES:
+- "summary" must be a string with 5-7 bullet points separated by \\n, each starting with "- "
+- "key_findings" must be an array of 5-7 distinct findings
+- Each bullet point should be 1-2 sentences of substantive content, not metadata
+- "relevance_score" must be a number 0-100"""
     
     def __init__(self, llm: LLMProvider):
         self.llm = llm
@@ -603,22 +638,36 @@ IMPORTANT:
     async def summarize(self, article: Article) -> LLMSummaryResult:
         """Summarize article using LLM."""
         try:
+            # Use full_text if available (better summaries), otherwise abstract
+            if article.full_text and len(article.full_text) > 200:
+                content_section = f"Full Text:\n{truncate_text(article.full_text, 6000)}"
+            elif article.abstract and len(article.abstract) > 50:
+                content_section = f"Abstract:\n{truncate_text(article.abstract, 3000)}"
+            else:
+                content_section = f"Abstract:\n{article.abstract or 'Not available'}"
+
             prompt = self.SUMMARIZE_PROMPT.format(
                 title=article.title,
-                abstract=truncate_text(article.abstract or "", 3000),
+                content_section=content_section,
                 study_type=article.study_type or "unknown",
                 source_quality=article.source_quality or "medium",
             )
-            
+
             response = await self.llm.complete(
                 messages=[{"role": "user", "content": prompt}],
-                max_tokens=1000,
+                max_tokens=16000,
                 temperature=0.3,
             )
 
             # Clean and parse JSON response
             response_text = clean_json_response(response)
-            result = json.loads(response_text)
+            try:
+                result = json.loads(response_text)
+            except json.JSONDecodeError as je:
+                logger.error(f"Summarize JSON parse failed for '{article.title[:60]}': {je}")
+                logger.error(f"Raw response (first 300): {response[:300]}")
+                logger.error(f"Cleaned (first 300): {response_text[:300]}")
+                raise
 
             # Handle summary - convert list to string if needed
             summary = result.get("summary", "")
@@ -633,16 +682,11 @@ IMPORTANT:
                 quality_assessment=result.get("quality_assessment", ""),
                 relevance_score=result.get("relevance_score", 50),
             )
-            
+
         except Exception as e:
-            logger.error(f"LLM summarization failed: {e}")
-            return LLMSummaryResult(
-                summary=truncate_text(article.abstract or article.title, 300),
-                key_findings=[],
-                preventive_implications="Unable to assess",
-                quality_assessment="Unable to assess",
-                relevance_score=50,
-            )
+            logger.error(f"LLM summarization failed for '{article.title[:60]}': {e}")
+            # Do not fallback - let the article be retried in the next pipeline cycle
+            raise
 
 
 # Global instances
@@ -721,18 +765,47 @@ async def process_batch(request: BatchRequest):
         # 2. Classify
         classify_result = await classifier.classify(article)
 
+        # Filter out articles that the LLM classified as not relevant to preventive health
+        if classify_result.confidence == 0.0 or classify_result.project_area == ProjectArea.GENERAL:
+            logger.info(f"Filtered out irrelevant article: {article.title[:60]}")
+            results.append({
+                "article_id": article.article_id,
+                "status": "filtered_out",
+                "reasons": ["Not relevant to preventive health"],
+            })
+            continue
+
         # Rate limit delay between LLM calls (avoid 429 errors)
         await asyncio.sleep(0.3)
 
-        # 3. Summarize
-        summary_result = await summarizer.summarize(article)
+        # 3. Summarize (if this fails, skip article - it will be retried next cycle)
+        try:
+            summary_result = await summarizer.summarize(article)
+        except Exception as sum_err:
+            logger.warning(f"Summarization failed, skipping for retry: {article.title[:60]} - {sum_err}")
+            results.append({
+                "article_id": article.article_id,
+                "status": "skipped",
+                "reasons": [f"Summarization failed: {str(sum_err)[:100]}"],
+            })
+            continue
+
+        # Filter out articles with very low relevance score from summarization
+        if summary_result.relevance_score < 30:
+            logger.info(f"Filtered out low-relevance article (score={summary_result.relevance_score}): {article.title[:60]}")
+            results.append({
+                "article_id": article.article_id,
+                "status": "filtered_out",
+                "reasons": [f"Low relevance score: {summary_result.relevance_score}/100"],
+            })
+            continue
 
         # Rate limit delay between articles
         if i < len(request.articles) - 1:
             await asyncio.sleep(0.3)
-        
+
         processed_count += 1
-        
+
         results.append({
             "article_id": article.article_id,
             "status": "processed",

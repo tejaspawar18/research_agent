@@ -66,12 +66,14 @@ def clean_text(text: str) -> str:
     """Clean and normalize text content."""
     if not text:
         return ""
-    # Remove HTML tags
+    # Extract display text from link patterns: <URL|Display Text> or <path|Display Text>
+    text = re.sub(r'<[^>|]+\|([^>]+)>', r'\1', text)
+    # Remove HTML tags (but not their content)
     text = re.sub(r'<[^>]+>', ' ', text)
     # Remove excessive whitespace
     text = re.sub(r'\s+', ' ', text)
-    # Remove special characters but keep basic punctuation
-    text = re.sub(r'[^\w\s.,;:!?\-\'\"()]', ' ', text)
+    # Remove special characters but keep basic punctuation and apostrophes
+    text = re.sub(r'[^\w\s.,;:!?\-\'\"()\u2019]', ' ', text)
     return text.strip()
 
 

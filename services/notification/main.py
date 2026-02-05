@@ -87,9 +87,32 @@ class SlackClient:
 
 class MessageFormatter:
     @staticmethod
+    def _clean_title(title: str) -> str:
+        """Sanitize article title for Slack display.
+
+        Strips link patterns, HTML artifacts, and Slack mrkdwn special chars
+        that would break the <URL|Title> link format.
+        """
+        import re
+        if not title:
+            return "Untitled"
+        # Extract display text from <URL|Text> patterns
+        title = re.sub(r'<[^>|]+\|([^>]+)>', r'\1', title)
+        # Remove any remaining angle brackets and pipe characters
+        title = re.sub(r'[<>|]', '', title)
+        # Remove HTML tags
+        title = re.sub(r'&[a-zA-Z]+;', ' ', title)
+        # Clean up whitespace
+        title = re.sub(r'\s+', ' ', title).strip()
+        return title or "Untitled"
+
+    @staticmethod
     def format_article(article: Article) -> tuple:
         """Format a single article message - full summary and key findings, no truncation."""
         evidence_badge = EVIDENCE_BADGES.get(article.evidence_level or 2, "🟡")
+
+        # Clean title for safe Slack rendering
+        title = MessageFormatter._clean_title(article.title)
 
         # Get sub-topic tag for display
         sub_topic_tag = ""
@@ -99,7 +122,7 @@ class MessageFormatter:
 
         # Title with sub-topic tag
         blocks = [
-            {"type": "section", "text": {"type": "mrkdwn", "text": f"📄 *<{article.url}|{article.title}>*"}},
+            {"type": "section", "text": {"type": "mrkdwn", "text": f"📄 *<{article.url}|{title}>*"}},
             {"type": "context", "elements": [
                 e for e in [
                     {"type": "mrkdwn", "text": sub_topic_tag} if sub_topic_tag else None,
@@ -123,7 +146,7 @@ class MessageFormatter:
                 summary_text = summary_text.replace('\n-', '\n• ').replace('-', '•', 1)
             blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": f"*Summary:*\n{summary_text}"}})
 
-        return blocks, article.title
+        return blocks, title
     
     @staticmethod
     def format_digest(articles: List[Article], project_area: str, today: date) -> tuple:
@@ -177,8 +200,9 @@ class MessageFormatter:
                 tag_name = SUB_TOPIC_TAGS.get(article.sub_topic, article.sub_topic)
                 tag_str = f" `{tag_name}`"
 
+            clean_title = MessageFormatter._clean_title(article.title)
             date_str = f"📅 {article.published_date} | " if article.published_date else ""
-            text = f"*{i}. <{article.url}|{article.title}>*{tag_str}\n{date_str}{badge} Level {article.evidence_level or 'N/A'}"
+            text = f"*{i}. <{article.url}|{clean_title}>*{tag_str}\n{date_str}{badge} Level {article.evidence_level or 'N/A'}"
             if article.summary:
                 text += f"\n>{truncate_text(article.summary, 150)}"
             blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": text}})
