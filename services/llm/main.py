@@ -27,6 +27,10 @@ from shared.utils import (
     has_statistical_rigor, is_industry_funded, has_bad_science_indicators,
     truncate_text,
 )
+from shared.utils.metrics import (
+    add_metrics_endpoint,
+    QUALITY_FILTER, RELEVANCE_FILTER, ARTICLES_BY_PROJECT, LLM_TOKENS,
+)
 from shared.config import config
 
 logging.basicConfig(level=logging.INFO)
@@ -88,6 +92,7 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan,
 )
+add_metrics_endpoint(app)
 
 
 # Request/Response models
@@ -163,16 +168,17 @@ class LLMProvider:
         messages: List[Dict[str, str]],
         max_tokens: int = 16000,
         temperature: float = 0.3,
+        call_type: str = "unknown",
     ) -> str:
         """Generate completion."""
         if self.provider == "anthropic":
-            return await self._anthropic_complete(messages, max_tokens, temperature)
+            return await self._anthropic_complete(messages, max_tokens, temperature, call_type)
         elif self.provider == "gemini":
-            return await self._gemini_complete(messages, max_tokens, temperature)
+            return await self._gemini_complete(messages, max_tokens, temperature, call_type)
         else:
-            return await self._openai_complete(messages, max_tokens, temperature)
+            return await self._openai_complete(messages, max_tokens, temperature, call_type)
     
-    async def _openai_complete(self, messages, max_tokens, temperature) -> str:
+    async def _openai_complete(self, messages, max_tokens, temperature, call_type) -> str:
         async with httpx.AsyncClient() as client:
             response = await client.post(
                 "https://api.openai.com/v1/chat/completions",
@@ -190,9 +196,13 @@ class LLMProvider:
             )
             response.raise_for_status()
             data = response.json()
+            usage = data.get("usage", {})
+            if usage:
+                LLM_TOKENS.labels(provider="openai", model=self.model, call_type=call_type, token_type="prompt").inc(usage.get("prompt_tokens", 0))
+                LLM_TOKENS.labels(provider="openai", model=self.model, call_type=call_type, token_type="completion").inc(usage.get("completion_tokens", 0))
             return data["choices"][0]["message"]["content"]
     
-    async def _anthropic_complete(self, messages, max_tokens, temperature) -> str:
+    async def _anthropic_complete(self, messages, max_tokens, temperature, call_type) -> str:
         system_msg = ""
         user_msgs = []
         for msg in messages:
@@ -219,9 +229,13 @@ class LLMProvider:
             )
             response.raise_for_status()
             data = response.json()
+            usage = data.get("usage", {})
+            if usage:
+                LLM_TOKENS.labels(provider="anthropic", model=self.model, call_type=call_type, token_type="prompt").inc(usage.get("input_tokens", 0))
+                LLM_TOKENS.labels(provider="anthropic", model=self.model, call_type=call_type, token_type="completion").inc(usage.get("output_tokens", 0))
             return data["content"][0]["text"]
 
-    async def _gemini_complete(self, messages, max_tokens, temperature) -> str:
+    async def _gemini_complete(self, messages, max_tokens, temperature, call_type) -> str:
         """Google Gemini API completion."""
         # Convert messages to Gemini format
         # Gemini uses "contents" with "parts"
@@ -269,6 +283,12 @@ class LLMProvider:
             )
             response.raise_for_status()
             data = response.json()
+
+            # Track token usage from Gemini response
+            usage_metadata = data.get("usageMetadata", {})
+            if usage_metadata:
+                LLM_TOKENS.labels(provider="gemini", model=model, call_type=call_type, token_type="prompt").inc(usage_metadata.get("promptTokenCount", 0))
+                LLM_TOKENS.labels(provider="gemini", model=model, call_type=call_type, token_type="completion").inc(usage_metadata.get("candidatesTokenCount", 0))
 
             # Extract text from Gemini response
             if "candidates" in data and data["candidates"]:
@@ -517,6 +537,7 @@ If the article is NOT relevant to preventive health (e.g. technology, engineerin
             response = await self.llm.complete(
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.2,
+                call_type="classification",
             )
 
             # Clean and parse JSON response
@@ -657,6 +678,7 @@ RULES:
                 messages=[{"role": "user", "content": prompt}],
                 max_tokens=16000,
                 temperature=0.3,
+                call_type="summarization",
             )
 
             # Clean and parse JSON response
@@ -748,11 +770,19 @@ async def process_batch(request: BatchRequest):
     passed_count = 0
     processed_count = 0
 
+    # Detailed filter counters
+    quality_failed_count = 0
+    not_relevant_count = 0
+    low_score_count = 0
+    summarization_failed_count = 0
+
     for i, article in enumerate(request.articles):
         # 1. Quality filter
         filter_result = quality_filter.filter(article)
 
         if not filter_result.passed:
+            QUALITY_FILTER.labels(result="filtered_out").inc()
+            quality_failed_count += 1
             results.append({
                 "article_id": article.article_id,
                 "status": "filtered_out",
@@ -760,6 +790,7 @@ async def process_batch(request: BatchRequest):
             })
             continue
 
+        QUALITY_FILTER.labels(result="passed").inc()
         passed_count += 1
 
         # 2. Classify
@@ -767,6 +798,8 @@ async def process_batch(request: BatchRequest):
 
         # Filter out articles that the LLM classified as not relevant to preventive health
         if classify_result.confidence == 0.0 or classify_result.project_area == ProjectArea.GENERAL:
+            RELEVANCE_FILTER.labels(result="not_relevant").inc()
+            not_relevant_count += 1
             logger.info(f"Filtered out irrelevant article: {article.title[:60]}")
             results.append({
                 "article_id": article.article_id,
@@ -783,6 +816,7 @@ async def process_batch(request: BatchRequest):
             summary_result = await summarizer.summarize(article)
         except Exception as sum_err:
             logger.warning(f"Summarization failed, skipping for retry: {article.title[:60]} - {sum_err}")
+            summarization_failed_count += 1
             results.append({
                 "article_id": article.article_id,
                 "status": "skipped",
@@ -792,6 +826,8 @@ async def process_batch(request: BatchRequest):
 
         # Filter out articles with very low relevance score from summarization
         if summary_result.relevance_score < 30:
+            RELEVANCE_FILTER.labels(result="low_score").inc()
+            low_score_count += 1
             logger.info(f"Filtered out low-relevance article (score={summary_result.relevance_score}): {article.title[:60]}")
             results.append({
                 "article_id": article.article_id,
@@ -799,6 +835,12 @@ async def process_batch(request: BatchRequest):
                 "reasons": [f"Low relevance score: {summary_result.relevance_score}/100"],
             })
             continue
+
+        RELEVANCE_FILTER.labels(result="relevant").inc()
+        ARTICLES_BY_PROJECT.labels(
+            project_area=classify_result.project_area.value,
+            sub_topic=classify_result.sub_topic,
+        ).inc()
 
         # Rate limit delay between articles
         if i < len(request.articles) - 1:
@@ -819,7 +861,18 @@ async def process_batch(request: BatchRequest):
             "preventive_implications": summary_result.preventive_implications,
             "relevance_score": summary_result.relevance_score,
         })
-    
+
+    # Log summary of batch processing
+    total = len(request.articles)
+    logger.info(
+        f"LLM Batch Summary: {total} articles → "
+        f"Quality failed: {quality_failed_count}, "
+        f"Not relevant: {not_relevant_count}, "
+        f"Low score (<30): {low_score_count}, "
+        f"Summarization failed: {summarization_failed_count}, "
+        f"Processed: {processed_count}"
+    )
+
     return BatchResponse(
         total=len(request.articles),
         passed_filter=passed_count,

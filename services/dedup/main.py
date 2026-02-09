@@ -18,6 +18,7 @@ from shared.utils import (
     compute_hash, compute_url_hash, title_similarity,
 )
 from shared.config import config
+from shared.utils.metrics import add_metrics_endpoint
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -46,6 +47,7 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan,
 )
+add_metrics_endpoint(app)
 
 
 class DedupRequest(BaseModel):

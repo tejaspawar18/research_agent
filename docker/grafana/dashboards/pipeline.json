@@ -1,0 +1,352 @@
+{
+  "annotations": {
+    "list": []
+  },
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+    {
+      "title": "Articles per Source (Top 15)",
+      "type": "barchart",
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisLabel": "",
+            "barAlignment": 0,
+            "fillOpacity": 80,
+            "gradientMode": "none",
+            "stacking": { "mode": "none" }
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "orientation": "horizontal",
+        "showValue": "auto",
+        "barWidth": 0.7
+      },
+      "targets": [
+        {
+          "expr": "topk(15, sum by (source_name) (articles_crawled_total))",
+          "legendFormat": "{{source_name}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Crawl Method Breakdown",
+      "type": "piechart",
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "table", "placement": "right", "values": ["value", "percent"] },
+        "pieType": "donut",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "tooltip": { "mode": "single" }
+      },
+      "targets": [
+        {
+          "expr": "sum by (crawl_method) (articles_crawled_by_method_total)",
+          "legendFormat": "{{crawl_method}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Content Type (Full Text vs Abstract Only)",
+      "type": "piechart",
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 9 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "full_text" },
+            "properties": [{ "id": "color", "value": { "fixedColor": "green", "mode": "fixed" } }]
+          },
+          {
+            "matcher": { "id": "byName", "options": "abstract_only" },
+            "properties": [{ "id": "color", "value": { "fixedColor": "orange", "mode": "fixed" } }]
+          }
+        ]
+      },
+      "options": {
+        "legend": { "displayMode": "table", "placement": "right", "values": ["value", "percent"] },
+        "pieType": "donut",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      },
+      "targets": [
+        {
+          "expr": "sum by (content_type) (articles_content_type_total)",
+          "legendFormat": "{{content_type}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Extraction Method Used",
+      "type": "barchart",
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 9 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "fillOpacity": 80
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "orientation": "horizontal",
+        "showValue": "auto",
+        "barWidth": 0.7
+      },
+      "targets": [
+        {
+          "expr": "sum by (method) (extraction_method_total)",
+          "legendFormat": "{{method}}",
+          "refId": "A"
+        }
+      ]
+    },
+    {
+      "title": "Relevance Filtering",
+      "type": "stat",
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 18 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green", "value": null },
+              { "color": "green", "value": 0 }
+            ]
+          }
+        },
+        "overrides": [
+          {
+            "matcher": { "id": "byName", "options": "Failed Quality" },
+            "properties": [
+              { "id": "color", "value": { "fixedColor": "red", "mode": "fixed" } }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Not Relevant" },
+            "properties": [
+              { "id": "color", "value": { "fixedColor": "orange", "mode": "fixed" } }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Relevant" },
+            "properties": [
+              { "id": "color", "value": { "fixedColor": "green", "mode": "fixed" } }
+            ]
+          },
+          {
+            "matcher": { "id": "byName", "options": "Passed Quality" },
+            "properties": [
+              { "id": "color", "value": { "fixedColor": "blue", "mode": "fixed" } }
+            ]
+          }
+        ]
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "horizontal",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "auto"
+      },
+      "targets": [
+        {
+          "expr": "sum(articles_quality_filter_total{result=\"passed\"})",
+          "legendFormat": "Passed Quality",
+          "refId": "A"
+        },
+        {
+          "expr": "sum(articles_quality_filter_total{result=\"filtered_out\"})",
+          "legendFormat": "Failed Quality",
+          "refId": "B"
+        },
+        {
+          "expr": "sum(articles_relevance_filter_total{result=\"relevant\"})",
+          "legendFormat": "Relevant",
+          "refId": "C"
+        },
+        {
+          "expr": "sum(articles_relevance_filter_total{result=\"not_relevant\"}) + sum(articles_relevance_filter_total{result=\"low_score\"})",
+          "legendFormat": "Not Relevant",
+          "refId": "D"
+        }
+      ]
+    },
+    {
+      "title": "Articles per Project Area",
+      "type": "barchart",
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 18 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "fillOpacity": 80
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "orientation": "horizontal",
+        "showValue": "auto",
+        "barWidth": 0.7
+      },
+      "targets": [
+        {
+          "expr": "sum by (project_area) (articles_by_project_area_total)",
+          "legendFormat": "{{project_area}}",
+          "refId": "A"
+        }
+      ]
+    },
+    
+    {
+      "title": "LLM Token Usage (Rate per Hour)",
+      "type": "timeseries",
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 27 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": {
+            "axisBorderShow": false,
+            "axisCenteredZero": false,
+            "axisLabel": "tokens/sec",
+            "drawStyle": "line",
+            "fillOpacity": 20,
+            "lineWidth": 2,
+            "pointSize": 5,
+            "showPoints": "auto",
+            "stacking": { "mode": "none" }
+          },
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["sum", "lastNotNull"] },
+        "tooltip": { "mode": "multi" }
+      },
+      "targets": [
+        {
+          "expr": "sum by (call_type) (rate(llm_tokens_total{token_type=\"prompt\"}[1h]))",
+          "legendFormat": "{{call_type}} prompt",
+          "refId": "A"
+        },
+        {
+          "expr": "sum by (call_type) (rate(llm_tokens_total{token_type=\"completion\"}[1h]))",
+          "legendFormat": "{{call_type}} completion",
+          "refId": "B"
+        }
+      ]
+    },
+    {
+      "title": "Pipeline Funnel (Latest Run)",
+      "type": "stat",
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 27 },
+      "datasource": { "type": "prometheus", "uid": "${DS_PROMETHEUS}" },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "yellow", "value": null },
+              { "color": "green", "value": 1 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background_solid",
+        "graphMode": "none",
+        "justifyMode": "auto",
+        "orientation": "horizontal",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false },
+        "textMode": "value_and_name"
+      },
+      "targets": [
+        {
+          "expr": "pipeline_stage_articles{stage=\"crawled\"}",
+          "legendFormat": "Crawled",
+          "refId": "A"
+        },
+        {
+          "expr": "pipeline_stage_articles{stage=\"deduplicated\"}",
+          "legendFormat": "Deduplicated",
+          "refId": "B"
+        },
+        {
+          "expr": "pipeline_stage_articles{stage=\"extracted\"}",
+          "legendFormat": "Extracted",
+          "refId": "C"
+        },
+        {
+          "expr": "pipeline_stage_articles{stage=\"processed\"}",
+          "legendFormat": "Processed",
+          "refId": "D"
+        },
+        {
+          "expr": "pipeline_stage_articles{stage=\"notified\"}",
+          "legendFormat": "Notified",
+          "refId": "E"
+        }
+      ]
+    }
+  ],
+  "schemaVersion": 39,
+  "tags": ["preventive-health", "pipeline"],
+  "templating": {
+    "list": [
+      {
+        "current": {
+          "selected": false,
+          "text": "Prometheus",
+          "value": "prometheus"
+        },
+        "hide": 2,
+        "includeAll": false,
+        "multi": false,
+        "name": "DS_PROMETHEUS",
+        "options": [],
+        "query": "prometheus",
+        "type": "datasource"
+      }
+    ]
+  },
+  "time": { "from": "now-24h", "to": "now" },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Preventive Health Pipeline",
+  "uid": "preventive-health-pipeline",
+  "version": 1
+}

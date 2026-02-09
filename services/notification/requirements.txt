@@ -6,3 +6,4 @@ httpx>=0.26.0
 redis>=5.0.0
 PyYAML>=6.0.1
 cassandra-driver>=3.29.0
+prometheus_client>=0.20.0

@@ -28,6 +28,20 @@ from .helpers import (
     get_domain,
     classify_source_quality,
 )
+from .metrics import (
+    add_metrics_endpoint,
+    ARTICLES_CRAWLED,
+    CRAWL_METHOD_USED,
+    CONTENT_TYPE_COUNTER,
+    EXTRACTION_METHOD,
+    QUALITY_FILTER,
+    RELEVANCE_FILTER,
+    ARTICLES_BY_PROJECT,
+    LLM_TOKENS,
+    PIPELINE_RUNS,
+    PIPELINE_STAGE_ARTICLES,
+    PIPELINE_DURATION,
+)
 
 __all__ = [
     # Database
@@ -37,7 +51,7 @@ __all__ = [
     "S3Manager",
     "initialize_schema",
     "SCYLLA_SCHEMA",
-    
+
     # Helpers
     "normalize_text",
     "compute_hash",
@@ -58,4 +72,18 @@ __all__ = [
     "safe_get",
     "get_domain",
     "classify_source_quality",
+
+    # Metrics
+    "add_metrics_endpoint",
+    "ARTICLES_CRAWLED",
+    "CRAWL_METHOD_USED",
+    "CONTENT_TYPE_COUNTER",
+    "EXTRACTION_METHOD",
+    "QUALITY_FILTER",
+    "RELEVANCE_FILTER",
+    "ARTICLES_BY_PROJECT",
+    "LLM_TOKENS",
+    "PIPELINE_RUNS",
+    "PIPELINE_STAGE_ARTICLES",
+    "PIPELINE_DURATION",
 ]

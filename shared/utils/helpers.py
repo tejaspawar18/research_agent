@@ -236,7 +236,11 @@ def parse_date_string(date_str: str) -> Optional[datetime]:
         "%b %d, %Y",
         "%d %B %Y",
         "%d %b %Y",
+        "%Y %B %d",  # PubMed format: "2026 February 5"
+        "%Y %b %d",  # PubMed format: "2026 Feb 5"
         "%Y-%m",
+        "%Y %B",     # PubMed format: "2026 February"
+        "%Y %b",     # PubMed format: "2026 Feb"
         "%B %Y",
         "%b %Y",
         "%Y",

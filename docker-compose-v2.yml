@@ -285,6 +285,8 @@ services:
       - EXTRACTION_URL=http://health-extraction-1:8003
       - LLM_URL=http://health-llm:8004
       - NOTIFICATION_URL=http://health-notification:8005
+      # Slack (for weekly digest)
+      - SLACK_BOT_TOKEN=${SLACK_BOT_TOKEN}
       # Disable scheduled runs (use independent crons instead)
       - ENABLE_SCHEDULER=false
     depends_on:
@@ -390,8 +392,12 @@ services:
       - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_PASSWORD:-admin}
     volumes:
       - grafana-data:/var/lib/grafana
+      - ./docker/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./docker/grafana/dashboards:/var/lib/grafana/dashboards:ro
     ports:
       - "3000:3000"
+    depends_on:
+      - prometheus
     networks:
       - health-network
     restart: unless-stopped

@@ -10,6 +10,7 @@ import sys
 sys.path.insert(0, '/app')
 
 from shared.models import Article
+from shared.utils.metrics import CRAWL_METHOD_USED
 from rss_crawler import RSSCrawler
 from html_crawler import HTMLCrawler
 from pubmed_crawler import PubMedCrawler
@@ -59,6 +60,7 @@ class AdaptiveCrawler:
             articles = await self._try_pubmed_api_crawl(max_articles)
             if articles:
                 logger.info(f"✓ PubMed API crawl succeeded for {self.source.name}: {len(articles)} articles")
+                CRAWL_METHOD_USED.labels(source_id=self.source.source_id, crawl_method="pubmed_api").inc(len(articles))
                 return articles
             logger.warning(f"PubMed API returned no articles for {self.source.name}")
 
@@ -67,12 +69,14 @@ class AdaptiveCrawler:
             articles = await self._try_rss_crawl(max_articles)
             if articles:
                 logger.info(f"✓ RSS crawl succeeded for {self.source.name}: {len(articles)} articles")
+                CRAWL_METHOD_USED.labels(source_id=self.source.source_id, crawl_method="rss").inc(len(articles))
                 return articles
 
         # Method 2: Auto-detect RSS/Atom feeds from the page
         articles = await self._try_auto_detect_feed(max_articles)
         if articles:
             logger.info(f"✓ Auto-detected feed succeeded for {self.source.name}: {len(articles)} articles")
+            CRAWL_METHOD_USED.labels(source_id=self.source.source_id, crawl_method="auto_detect_feed").inc(len(articles))
             return articles
 
         # Method 3: Try HTML scraping with configured selectors
@@ -80,12 +84,14 @@ class AdaptiveCrawler:
             articles = await self._try_html_crawl(max_articles, use_defaults=False)
             if articles:
                 logger.info(f"✓ HTML crawl with custom selectors succeeded for {self.source.name}: {len(articles)} articles")
+                CRAWL_METHOD_USED.labels(source_id=self.source.source_id, crawl_method="html_custom").inc(len(articles))
                 return articles
 
         # Method 4: Try HTML scraping with generic/default selectors
         articles = await self._try_html_crawl(max_articles, use_defaults=True)
         if articles:
             logger.info(f"✓ HTML crawl with default selectors succeeded for {self.source.name}: {len(articles)} articles")
+            CRAWL_METHOD_USED.labels(source_id=self.source.source_id, crawl_method="html_default").inc(len(articles))
             return articles
 
         # All methods failed

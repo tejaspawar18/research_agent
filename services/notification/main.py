@@ -3,11 +3,16 @@ Notification Service - Slack integration for article delivery.
 """
 import logging
 import os
+import hmac
+import hashlib
+import json
+import urllib.parse
 from contextlib import asynccontextmanager
 from typing import List, Dict, Any, Optional
 from datetime import datetime, date
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, HTTPException
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 import httpx
 
@@ -15,22 +20,37 @@ import sys
 sys.path.insert(0, '/app')
 
 from shared.models import Article, ProjectArea, DailyDigest, SUB_TOPIC_TAGS
-from shared.utils import RedisManager, truncate_text
+from shared.utils import RedisManager, truncate_text, ScyllaDBManager
 from shared.config import config
+from shared.utils.metrics import add_metrics_endpoint
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 redis_manager = RedisManager()
+scylla_manager = ScyllaDBManager()
+
+# Slack signing secret for verifying interaction requests
+SLACK_SIGNING_SECRET = os.getenv("SLACK_SIGNING_SECRET", "")
+
+
+def get_week_year(dt: date = None) -> str:
+    """Get week-year string like '2026-W06' for partition key."""
+    if dt is None:
+        dt = date.today()
+    iso_cal = dt.isocalendar()
+    return f"{iso_cal[0]}-W{iso_cal[1]:02d}"
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await redis_manager.connect()
+    scylla_manager.connect()
     config.load()
     logger.info("Notification service started")
     yield
     await redis_manager.disconnect()
+    scylla_manager.disconnect()
 
 
 app = FastAPI(
@@ -39,6 +59,7 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan,
 )
+add_metrics_endpoint(app)
 
 
 class NotifyRequest(BaseModel):
@@ -133,7 +154,7 @@ class MessageFormatter:
             ]},
         ]
 
-        # Full summary (no truncation) - ensure bullet points are on new lines
+        # Summary with Slack section text limit (3000 chars max)
         if article.summary:
             summary_text = article.summary
             # Replace escaped newlines with actual newlines
@@ -144,7 +165,41 @@ class MessageFormatter:
                 summary_text = summary_text.replace('\n-', '\n• ').replace('- ', '• ', 1) if summary_text.startswith('- ') else summary_text
             else:
                 summary_text = summary_text.replace('\n-', '\n• ').replace('-', '•', 1)
-            blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": f"*Summary:*\n{summary_text}"}})
+            full_text = f"*Summary:*\n{summary_text}"
+            # Slack section text blocks have a 3000-char limit
+            if len(full_text) > 2900:
+                full_text = full_text[:2897] + "..."
+            blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": full_text}})
+
+        # Add feedback buttons
+        # Encode article metadata in button value: article_id|source_id|published_date
+        button_value = f"{article.article_id}|{article.source_id}|{article.published_date}"
+        blocks.append({"type": "divider"})
+        blocks.append({
+            "type": "actions",
+            "block_id": f"feedback_{article.article_id}",
+            "elements": [
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": "👍 Useful", "emoji": True},
+                    "style": "primary",
+                    "action_id": "feedback_positive",
+                    "value": button_value,
+                },
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": "👎 Not Useful", "emoji": True},
+                    "action_id": "feedback_negative",
+                    "value": button_value,
+                },
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": "💬 Comment", "emoji": True},
+                    "action_id": "feedback_comment",
+                    "value": button_value,
+                },
+            ],
+        })
 
         return blocks, title
     
@@ -245,3 +300,182 @@ async def list_channels():
 @app.get("/health")
 async def health():
     return {"status": "healthy", "service": "notification", "slack_configured": bool(os.getenv("SLACK_BOT_TOKEN"))}
+
+
+def verify_slack_signature(timestamp: str, body: bytes, signature: str) -> bool:
+    """Verify Slack request signature using signing secret."""
+    if not SLACK_SIGNING_SECRET:
+        logger.warning("SLACK_SIGNING_SECRET not configured, skipping verification")
+        return True
+
+    sig_basestring = f"v0:{timestamp}:{body.decode('utf-8')}"
+    computed_sig = "v0=" + hmac.new(
+        SLACK_SIGNING_SECRET.encode(),
+        sig_basestring.encode(),
+        hashlib.sha256
+    ).hexdigest()
+
+    return hmac.compare_digest(computed_sig, signature)
+
+
+@app.post("/slack/interactions")
+async def slack_interactions(request: Request):
+    """Handle Slack interactive component callbacks (button clicks, modal submissions)."""
+    body = await request.body()
+
+    # Verify Slack signature
+    timestamp = request.headers.get("X-Slack-Request-Timestamp", "")
+    signature = request.headers.get("X-Slack-Signature", "")
+
+    if not verify_slack_signature(timestamp, body, signature):
+        raise HTTPException(status_code=401, detail="Invalid signature")
+
+    # Parse the payload
+    try:
+        parsed = urllib.parse.parse_qs(body.decode("utf-8"))
+        payload = json.loads(parsed.get("payload", ["{}"])[0])
+    except Exception as e:
+        logger.error(f"Failed to parse Slack payload: {e}")
+        raise HTTPException(status_code=400, detail="Invalid payload")
+
+    payload_type = payload.get("type")
+
+    # Handle button clicks
+    if payload_type == "block_actions":
+        actions = payload.get("actions", [])
+        user = payload.get("user", {})
+        channel = payload.get("channel", {})
+        message = payload.get("message", {})
+
+        for action in actions:
+            action_id = action.get("action_id", "")
+            value = action.get("value", "")
+
+            if action_id.startswith("feedback_"):
+                # Parse button value: article_id|source_id|published_date
+                parts = value.split("|")
+                if len(parts) != 3:
+                    logger.error(f"Invalid button value format: {value}")
+                    continue
+
+                article_id, source_id, published_date_str = parts
+                feedback_type = action_id.replace("feedback_", "")  # positive, negative, comment
+
+                if feedback_type == "comment":
+                    # Open modal for comment input
+                    trigger_id = payload.get("trigger_id")
+                    if trigger_id:
+                        await open_comment_modal(trigger_id, article_id, source_id, published_date_str, message.get("ts", ""), channel.get("id", ""))
+                    return JSONResponse(content={})
+
+                # Store feedback in ScyllaDB
+                week_year = get_week_year()
+                try:
+                    scylla_manager.insert_article_feedback(
+                        week_year=week_year,
+                        article_id=article_id,
+                        message_ts=message.get("ts", ""),
+                        channel=channel.get("id", ""),
+                        user_id=user.get("id", ""),
+                        user_name=user.get("username", user.get("name", "")),
+                        feedback_type=feedback_type,
+                    )
+                    logger.info(f"Stored {feedback_type} feedback for article {article_id} from user {user.get('id')}")
+                except Exception as e:
+                    logger.error(f"Failed to store feedback: {e}")
+
+                # Update the message to show feedback received
+                return JSONResponse(content={
+                    "response_action": "update",
+                    "text": f"Thanks for your feedback! ({feedback_type})",
+                })
+
+    # Handle modal submissions
+    elif payload_type == "view_submission":
+        view = payload.get("view", {})
+        callback_id = view.get("callback_id", "")
+
+        if callback_id.startswith("comment_modal_"):
+            # Parse metadata from callback_id: comment_modal_articleId_sourceId_publishedDate_messageTs_channel
+            metadata = view.get("private_metadata", "")
+            parts = metadata.split("|")
+
+            if len(parts) != 5:
+                logger.error(f"Invalid comment modal metadata: {metadata}")
+                return JSONResponse(content={"response_action": "clear"})
+
+            article_id, source_id, published_date_str, message_ts, channel_id = parts
+
+            # Get comment text from modal
+            values = view.get("state", {}).get("values", {})
+            comment_text = ""
+            for block_id, block_values in values.items():
+                for action_id, action_data in block_values.items():
+                    if action_id == "comment_input":
+                        comment_text = action_data.get("value", "")
+
+            user = payload.get("user", {})
+            week_year = get_week_year()
+
+            try:
+                scylla_manager.insert_article_feedback(
+                    week_year=week_year,
+                    article_id=article_id,
+                    message_ts=message_ts,
+                    channel=channel_id,
+                    user_id=user.get("id", ""),
+                    user_name=user.get("username", user.get("name", "")),
+                    feedback_type="comment",
+                    comment=comment_text,
+                )
+                logger.info(f"Stored comment for article {article_id} from user {user.get('id')}")
+            except Exception as e:
+                logger.error(f"Failed to store comment: {e}")
+
+            return JSONResponse(content={"response_action": "clear"})
+
+    return JSONResponse(content={})
+
+
+async def open_comment_modal(trigger_id: str, article_id: str, source_id: str, published_date: str, message_ts: str, channel: str):
+    """Open a Slack modal for entering a comment."""
+    bot_token = os.getenv("SLACK_BOT_TOKEN")
+    if not bot_token:
+        logger.error("SLACK_BOT_TOKEN not configured for opening modal")
+        return
+
+    # Encode metadata in private_metadata
+    private_metadata = f"{article_id}|{source_id}|{published_date}|{message_ts}|{channel}"
+
+    modal = {
+        "type": "modal",
+        "callback_id": f"comment_modal_{article_id}",
+        "title": {"type": "plain_text", "text": "Add Comment"},
+        "submit": {"type": "plain_text", "text": "Submit"},
+        "close": {"type": "plain_text", "text": "Cancel"},
+        "private_metadata": private_metadata,
+        "blocks": [
+            {
+                "type": "input",
+                "block_id": "comment_block",
+                "element": {
+                    "type": "plain_text_input",
+                    "action_id": "comment_input",
+                    "multiline": True,
+                    "placeholder": {"type": "plain_text", "text": "Enter your comment about this article..."},
+                },
+                "label": {"type": "plain_text", "text": "Your Comment"},
+            }
+        ],
+    }
+
+    async with httpx.AsyncClient() as client:
+        response = await client.post(
+            "https://slack.com/api/views.open",
+            headers={"Authorization": f"Bearer {bot_token}", "Content-Type": "application/json"},
+            json={"trigger_id": trigger_id, "view": modal},
+            timeout=10.0,
+        )
+        result = response.json()
+        if not result.get("ok"):
+            logger.error(f"Failed to open comment modal: {result.get('error')}")

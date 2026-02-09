@@ -23,6 +23,10 @@ sys.path.insert(0, '/app')
 
 from shared.models import Article, PipelineRun, ArticleStatus, ProjectArea
 from shared.utils import ScyllaDBManager, RedisManager, KafkaManager, S3Manager, initialize_schema
+from shared.utils.metrics import (
+    add_metrics_endpoint,
+    CONTENT_TYPE_COUNTER, PIPELINE_RUNS, PIPELINE_STAGE_ARTICLES, PIPELINE_DURATION,
+)
 from shared.config import config
 
 logging.basicConfig(level=logging.INFO)
@@ -60,6 +64,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="Orchestrator Service", version="1.0.0", lifespan=lifespan)
+add_metrics_endpoint(app)
 
 
 class PipelineRequest(BaseModel):
@@ -112,10 +117,12 @@ class PipelineOrchestrator:
                 run.status = "crawling"
                 articles = await self._crawl(source_ids)
                 run.articles_crawled = len(articles)
+                PIPELINE_STAGE_ARTICLES.labels(stage="crawled").set(run.articles_crawled)
                 logger.info(f"Crawled {len(articles)} new articles")
             else:
                 articles = await self._load_from_queue("articles:crawled")
                 run.articles_crawled = len(articles)
+                PIPELINE_STAGE_ARTICLES.labels(stage="crawled").set(run.articles_crawled)
 
             # Step 1b: Load incomplete articles from previous runs (yesterday + today only)
             # This allows resuming processing for articles that failed mid-pipeline
@@ -146,6 +153,7 @@ class PipelineOrchestrator:
             run.status = "deduplicating"
             unique_articles = await self._deduplicate(articles)
             run.articles_deduplicated = len(unique_articles)
+            PIPELINE_STAGE_ARTICLES.labels(stage="deduplicated").set(run.articles_deduplicated)
             logger.info(f"Deduplicated to {len(unique_articles)} articles")
 
             # Publish deduplicated articles to Kafka
@@ -176,10 +184,12 @@ class PipelineOrchestrator:
                     if a.full_text:
                         extracted_articles.append(a)
                         full_text_count += 1
+                        CONTENT_TYPE_COUNTER.labels(content_type="full_text").inc()
                     elif a.abstract and len(a.abstract) >= 100:
                         a.status = ArticleStatus.EXTRACTED
                         extracted_articles.append(a)
                         abstract_fallback_count += 1
+                        CONTENT_TYPE_COUNTER.labels(content_type="abstract_only").inc()
                         # Update status in DB for abstract-fallback articles
                         try:
                             db_manager.update_article_status(
@@ -190,6 +200,7 @@ class PipelineOrchestrator:
                             )
                         except Exception as db_err:
                             logger.warning(f"Failed to update abstract-fallback status for {a.article_id}: {db_err}")
+                PIPELINE_STAGE_ARTICLES.labels(stage="extracted").set(len(extracted_articles))
                 logger.info(f"Extracted: {full_text_count} full text, {abstract_fallback_count} abstract-only")
 
                 # Publish extracted articles to Kafka
@@ -205,6 +216,7 @@ class PipelineOrchestrator:
                 processed_articles.extend(newly_processed)
                 run.articles_filtered = len(processed_articles)
                 run.articles_summarized = len([a for a in processed_articles if a.summary])
+                PIPELINE_STAGE_ARTICLES.labels(stage="processed").set(run.articles_filtered)
                 logger.info(f"Processed {len(newly_processed)} articles (+ {len(already_processed)} already processed)")
             else:
                 processed_articles.extend(extracted_articles)
@@ -245,10 +257,12 @@ class PipelineOrchestrator:
                 run.status = "notifying"
                 notified = await self._notify(processed_articles)
                 run.articles_notified = notified
+                PIPELINE_STAGE_ARTICLES.labels(stage="notified").set(run.articles_notified)
                 logger.info(f"Notified {notified} articles")
 
             run.status = "completed"
             run.completed_at = datetime.utcnow()
+            PIPELINE_RUNS.labels(status="completed").inc()
             logger.info(f"Pipeline {run.run_id} completed successfully")
 
             # Publish pipeline completed event
@@ -265,6 +279,7 @@ class PipelineOrchestrator:
             logger.error(f"Pipeline failed: {e}")
             run.status = "failed"
             run.errors.append(str(e))
+            PIPELINE_RUNS.labels(status="failed").inc()
 
             # Publish pipeline failed event
             await kafka_manager.publish_event("pipeline_failed", {
@@ -273,6 +288,8 @@ class PipelineOrchestrator:
             })
 
         finally:
+            duration = (datetime.utcnow() - run.started_at).total_seconds()
+            PIPELINE_DURATION.labels(status=run.status).observe(duration)
             self._current = None
             self._runs[run.run_id] = run
             run_data = run.model_dump()
@@ -526,21 +543,34 @@ class PipelineOrchestrator:
         notified = 0
         MAX_NOTIFY = 40
 
-        # Filter out articles without a specific project area (safety net)
+        # Filter out articles without a specific project area or unscored articles
         relevant_articles = [
             a for a in articles
             if a.project_area and a.project_area != "general"
-            and (a.relevance_score is None or a.relevance_score >= 20)
+            and a.relevance_score is not None and a.relevance_score >= 20
         ]
         filtered_count = len(articles) - len(relevant_articles)
         if filtered_count:
             logger.info(f"Filtered out {filtered_count} articles with no specific project area or low relevance")
 
         # Sort by evidence level (highest first) and cap at MAX_NOTIFY
-        sorted_articles = sorted(relevant_articles, key=lambda a: (a.evidence_level or 0), reverse=True)[:MAX_NOTIFY]
+        all_sorted = sorted(relevant_articles, key=lambda a: (a.evidence_level or 0), reverse=True)
+        sorted_articles = all_sorted[:MAX_NOTIFY]
 
         if len(relevant_articles) > MAX_NOTIFY:
             logger.info(f"Capping notifications at {MAX_NOTIFY} articles (total: {len(relevant_articles)})")
+            # Mark overflow articles as notified so they don't retry indefinitely
+            for overflow_article in all_sorted[MAX_NOTIFY:]:
+                overflow_article.status = ArticleStatus.NOTIFIED
+                try:
+                    db_manager.update_article_status(
+                        source_id=overflow_article.source_id,
+                        published_date=overflow_article.published_date,
+                        article_id=overflow_article.article_id,
+                        status="notified",
+                    )
+                except Exception:
+                    pass
 
         try:
             async with httpx.AsyncClient(timeout=60.0) as client:
@@ -550,10 +580,21 @@ class PipelineOrchestrator:
                     try:
                         already_notified = await redis_manager.exists(notify_key)
                         if already_notified:
-                            logger.debug(f"Skipping already-notified article: {article.title[:50]}")
+                            logger.info(f"Skipping already-notified article (Redis guard): {article.title[:50]}")
+                            # Sync DB status so _load_incomplete_articles stops reloading this article
+                            article.status = ArticleStatus.NOTIFIED
+                            try:
+                                db_manager.update_article_status(
+                                    source_id=article.source_id,
+                                    published_date=article.published_date,
+                                    article_id=article.article_id,
+                                    status="notified",
+                                )
+                            except Exception:
+                                pass
                             continue
-                    except Exception:
-                        pass  # Redis unavailable - proceed with notification
+                    except Exception as redis_err:
+                        logger.warning(f"Redis check failed for {notify_key}, proceeding without guard: {redis_err}")
 
                     area = article.project_area
                     channel = config.slack.channels.get(area, "#research-general")
@@ -571,11 +612,13 @@ class PipelineOrchestrator:
                             result = response.json()
                             if result.get("success"):
                                 article.status = ArticleStatus.NOTIFIED
-                                # Mark as notified in Redis (permanent) to prevent duplicates
+                                message_ts = result.get("message_ts")
+
+                                # Mark as notified in Redis (7-day TTL) to prevent duplicates
                                 try:
-                                    await redis_manager.set(notify_key, "1")
-                                except Exception:
-                                    pass
+                                    await redis_manager.set(notify_key, "1", expire=604800)
+                                except Exception as redis_err:
+                                    logger.warning(f"Redis set failed for {notify_key}: {redis_err}")
                                 try:
                                     db_manager.update_article_status(
                                         source_id=article.source_id,
@@ -585,8 +628,30 @@ class PipelineOrchestrator:
                                     )
                                 except Exception as db_err:
                                     logger.warning(f"Failed to update notified status for {article.article_id}: {db_err}")
+
+                                # Store Slack message metadata for feedback correlation
+                                if message_ts:
+                                    try:
+                                        week_year = self._get_week_year()
+                                        db_manager.insert_slack_message(
+                                            week_year=week_year,
+                                            message_ts=message_ts,
+                                            channel=channel,
+                                            article_id=article.article_id,
+                                            source_id=article.source_id,
+                                            published_date=article.published_date,
+                                            project_area=article.project_area or "",
+                                            title=article.title or "",
+                                            url=article.url or "",
+                                            summary=article.summary or "",
+                                        )
+                                    except Exception as slack_db_err:
+                                        logger.warning(f"Failed to store Slack message metadata: {slack_db_err}")
+
                                 notified += 1
                                 logger.info(f"Notified: {article.title[:50]}...")
+                            else:
+                                logger.warning(f"Slack notification failed for {article.article_id}: {result.get('error', 'unknown')}")
 
                         # Small delay between messages to avoid rate limiting
                         await asyncio.sleep(1)
@@ -677,6 +742,165 @@ class PipelineOrchestrator:
     def get_current(self) -> Optional[PipelineRun]:
         return self._current
 
+    def _get_week_year(self, dt: date = None) -> str:
+        """Get week-year string like '2026-W06' for partition key."""
+        if dt is None:
+            dt = date.today()
+        iso_cal = dt.isocalendar()
+        return f"{iso_cal[0]}-W{iso_cal[1]:02d}"
+
+    async def send_weekly_digest(self):
+        """Send weekly digest of positively-rated articles to each project channel."""
+        # Get previous week's week_year
+        today = date.today()
+        last_week = today - timedelta(days=7)
+        week_year = self._get_week_year(last_week)
+        iso_cal = last_week.isocalendar()
+
+        logger.info(f"Generating weekly digest for {week_year}")
+
+        try:
+            # Get positive feedback for the week
+            positive_feedback = db_manager.get_positive_feedback_articles(week_year)
+            if not positive_feedback:
+                logger.info(f"No positive feedback found for {week_year}")
+                return
+
+            # Get article details from slack messages
+            slack_messages = db_manager.get_slack_messages_for_week(week_year)
+            message_map = {msg["message_ts"]: msg for msg in slack_messages}
+
+            # Group articles by project area
+            area_articles: Dict[str, List[Dict]] = {}
+            seen_articles = set()
+
+            for feedback in positive_feedback:
+                message_ts = feedback.get("message_ts")
+                article_id = str(feedback.get("article_id"))
+
+                # Skip duplicate articles (multiple positive votes for same article)
+                if article_id in seen_articles:
+                    continue
+                seen_articles.add(article_id)
+
+                msg = message_map.get(message_ts, {})
+                project_area = msg.get("project_area") or "general"
+
+                if project_area not in area_articles:
+                    area_articles[project_area] = []
+
+                area_articles[project_area].append({
+                    "article_id": article_id,
+                    "title": msg.get("title", "Unknown Title"),
+                    "url": msg.get("url", ""),
+                    "summary": msg.get("summary", ""),
+                    "positive_votes": 1,  # Could aggregate if needed
+                })
+
+            if not area_articles:
+                logger.info(f"No articles with positive feedback for {week_year}")
+                return
+
+            # Send digest to each project channel
+            async with httpx.AsyncClient(timeout=60.0) as client:
+                for project_area, articles in area_articles.items():
+                    channel = config.slack.channels.get(project_area, "#research-general")
+
+                    # Format digest message
+                    blocks = self._format_weekly_digest(articles, week_year, project_area)
+                    text = f"Weekly Digest: {len(articles)} top-rated articles"
+
+                    try:
+                        response = await client.post(
+                            f"{NOTIFICATION_URL}/notify/article",
+                            json={
+                                "article": {
+                                    "article_id": "digest",
+                                    "url": "",
+                                    "title": text,
+                                    "summary": "",
+                                    "source_id": "digest",
+                                },
+                                "channel": channel,
+                            },
+                            timeout=30.0,
+                        )
+
+                        # Actually post the digest blocks directly via Slack
+                        bot_token = os.getenv("SLACK_BOT_TOKEN")
+                        if bot_token:
+                            slack_response = await client.post(
+                                "https://slack.com/api/chat.postMessage",
+                                headers={"Authorization": f"Bearer {bot_token}", "Content-Type": "application/json"},
+                                json={"channel": channel, "blocks": blocks, "text": text, "unfurl_links": False},
+                                timeout=30.0,
+                            )
+                            result = slack_response.json()
+
+                            if result.get("ok"):
+                                # Store digest record
+                                db_manager.insert_weekly_digest(
+                                    year=iso_cal[0],
+                                    week_number=iso_cal[1],
+                                    project_area=project_area,
+                                    channel=channel,
+                                    articles_count=len(articles),
+                                    message_ts=result.get("ts"),
+                                )
+                                logger.info(f"Sent weekly digest to {channel}: {len(articles)} articles")
+                            else:
+                                logger.error(f"Failed to send digest to {channel}: {result.get('error')}")
+
+                    except Exception as e:
+                        logger.error(f"Failed to send digest to {project_area}: {e}")
+
+        except Exception as e:
+            logger.error(f"Weekly digest failed: {e}")
+
+    def _format_weekly_digest(self, articles: List[Dict], week_year: str, project_area: str) -> List[Dict]:
+        """Format weekly digest as Slack blocks."""
+        area_names = {
+            "disease_prevention": "🏥 Disease Prevention",
+            "behavioral_protocols": "🏃 Behavioral Protocols",
+            "nutritional_protocols": "🥗 Nutritional Protocols",
+            "government_interventions": "🏛️ Government Interventions",
+            "youth_health": "🎓 Youth Health",
+            "general": "📚 General Research",
+        }
+
+        area_name = area_names.get(project_area, project_area)
+
+        blocks = [
+            {"type": "header", "text": {"type": "plain_text", "text": f"⭐ Weekly Digest: {area_name}", "emoji": True}},
+            {"type": "context", "elements": [
+                {"type": "mrkdwn", "text": f"📅 Week {week_year}"},
+                {"type": "mrkdwn", "text": f"👍 {len(articles)} top-rated articles"},
+            ]},
+            {"type": "divider"},
+        ]
+
+        for i, article in enumerate(articles[:10], 1):
+            title = article.get("title", "Unknown Title")[:100]
+            url = article.get("url", "")
+            summary = article.get("summary", "")[:200]
+
+            if url:
+                text = f"*{i}. <{url}|{title}>*"
+            else:
+                text = f"*{i}. {title}*"
+
+            if summary:
+                text += f"\n>{summary}..."
+
+            blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": text}})
+
+        if len(articles) > 10:
+            blocks.append({"type": "context", "elements": [
+                {"type": "mrkdwn", "text": f"_...and {len(articles) - 10} more_"}
+            ]})
+
+        return blocks
+
 
 orchestrator = PipelineOrchestrator()
 
@@ -688,6 +912,11 @@ def setup_scheduler():
         trigger = CronTrigger(minute=parts[0], hour=parts[1], day=parts[2], month=parts[3], day_of_week=parts[4])
         scheduler.add_job(scheduled_run, trigger, id="daily_pipeline", replace_existing=True)
         logger.info(f"Scheduled pipeline: {schedule}")
+
+        # Weekly digest: Monday 9 AM IST (3:30 AM UTC)
+        digest_trigger = CronTrigger(minute=30, hour=3, day_of_week="mon")
+        scheduler.add_job(scheduled_weekly_digest, digest_trigger, id="weekly_digest", replace_existing=True)
+        logger.info("Scheduled weekly digest: Monday 9 AM IST")
     except Exception as e:
         logger.error(f"Scheduler setup failed: {e}")
 
@@ -695,6 +924,11 @@ def setup_scheduler():
 async def scheduled_run():
     logger.info("Starting scheduled pipeline run")
     await orchestrator.run_pipeline()
+
+
+async def scheduled_weekly_digest():
+    logger.info("Starting scheduled weekly digest")
+    await orchestrator.send_weekly_digest()
 
 
 @app.post("/pipeline/run", response_model=PipelineResponse)
@@ -724,6 +958,13 @@ async def get_run_status(run_id: str):
     if not run:
         raise HTTPException(status_code=404, detail="Run not found")
     return run.model_dump()
+
+
+@app.post("/pipeline/weekly-digest")
+async def trigger_weekly_digest(background_tasks: BackgroundTasks):
+    """Manually trigger the weekly digest."""
+    background_tasks.add_task(orchestrator.send_weekly_digest)
+    return {"status": "started", "message": "Weekly digest generation initiated"}
 
 
 @app.get("/health")

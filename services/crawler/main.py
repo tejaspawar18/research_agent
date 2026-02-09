@@ -29,6 +29,7 @@ from shared.utils import (
     compute_url_hash, compute_hash
 )
 from shared.config import config
+from shared.utils.metrics import add_metrics_endpoint, ARTICLES_CRAWLED
 
 from adaptive_crawler import AdaptiveCrawler
 
@@ -136,7 +137,14 @@ async def crawl_source(source) -> Dict:
         articles = await crawler.crawl(max_articles=MAX_ARTICLES_PER_SOURCE)
         
         source_stats["found"] = len(articles)
-        
+
+        # Track articles found per source for Grafana
+        ARTICLES_CRAWLED.labels(
+            source_id=source.source_id,
+            source_name=source.name,
+            quality_tier=source.quality_tier,
+        ).inc(len(articles))
+
         for article in articles:
             # Compute hashes
             article.url_hash = compute_url_hash(article.url)
@@ -291,6 +299,7 @@ app = FastAPI(
     version="2.0.0",
     lifespan=lifespan,
 )
+add_metrics_endpoint(app)
 
 
 # Request/Response models

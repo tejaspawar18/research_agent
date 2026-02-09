@@ -3,13 +3,17 @@ Extraction Service - Full text extraction for articles.
 """
 import logging
 import os
+import sys
 from typing import Optional
 from contextlib import asynccontextmanager
+
+sys.path.insert(0, '/app')
 
 import aiohttp
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, HttpUrl
 
+from shared.utils.metrics import add_metrics_endpoint, EXTRACTION_METHOD
 from pmc_extractor import PMCExtractor
 from pdf_extractor import PDFExtractor
 from html_extractor import HTMLExtractor
@@ -32,6 +36,7 @@ app = FastAPI(
     version="1.0.0",
     lifespan=lifespan,
 )
+add_metrics_endpoint(app)
 
 
 # Request/Response models
@@ -233,6 +238,8 @@ async def extract_fulltext(request: ExtractionRequest):
 
         if not full_text:
             error_msg = error_msg or "Could not extract full text using any available method"
+
+        EXTRACTION_METHOD.labels(method=method_used or "failed").inc()
 
         return ExtractionResponse(
             url=request.url,

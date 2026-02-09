@@ -368,6 +368,139 @@ class ScyllaDBManager:
         """
         self.execute_prepared(query, tuple(values))
 
+    # Slack feedback operations
+    def insert_slack_message(
+        self,
+        week_year: str,
+        message_ts: str,
+        channel: str,
+        article_id: str,
+        source_id: str,
+        published_date: date,
+        project_area: str,
+        title: str,
+        url: str,
+        summary: str,
+    ):
+        """Insert a Slack message record for feedback correlation."""
+        query = """
+            INSERT INTO governance_slack_messages (
+                week_year, message_ts, channel, article_id, source_id,
+                published_date, project_area, title, url, summary, sent_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """
+        self.execute_prepared(query, (
+            week_year,
+            message_ts,
+            channel,
+            uuid.UUID(article_id),
+            source_id,
+            published_date,
+            project_area,
+            title,
+            url,
+            summary,
+            datetime.utcnow(),
+        ))
+
+    def get_slack_message(self, week_year: str, message_ts: str) -> Optional[Dict]:
+        """Get Slack message details by week_year and message_ts."""
+        query = """
+            SELECT * FROM governance_slack_messages
+            WHERE week_year = ? AND message_ts = ?
+        """
+        rows = self.execute_prepared(query, (week_year, message_ts))
+        for row in rows:
+            return dict(row._asdict())
+        return None
+
+    def insert_article_feedback(
+        self,
+        week_year: str,
+        article_id: str,
+        message_ts: str,
+        channel: str,
+        user_id: str,
+        user_name: str,
+        feedback_type: str,
+        comment: str = None,
+    ):
+        """Insert article feedback from Slack user."""
+        query = """
+            INSERT INTO governance_article_feedback (
+                week_year, feedback_id, article_id, message_ts, channel,
+                user_id, user_name, feedback_type, comment, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """
+        self.execute_prepared(query, (
+            week_year,
+            uuid.uuid4(),
+            uuid.UUID(article_id),
+            message_ts,
+            channel,
+            user_id,
+            user_name,
+            feedback_type,
+            comment,
+            datetime.utcnow(),
+        ))
+
+    def get_positive_feedback_articles(self, week_year: str) -> List[Dict]:
+        """Get articles with positive feedback for a given week (no ALLOW FILTERING)."""
+        query = """
+            SELECT * FROM governance_article_feedback
+            WHERE week_year = ?
+        """
+        rows = self.execute_prepared(query, (week_year,))
+        # Filter in Python since we need feedback_type='positive'
+        positive = [dict(row._asdict()) for row in rows if row.feedback_type == "positive"]
+        return positive
+
+    def get_slack_messages_for_week(self, week_year: str) -> List[Dict]:
+        """Get all Slack messages for a given week."""
+        query = """
+            SELECT * FROM governance_slack_messages
+            WHERE week_year = ?
+        """
+        rows = self.execute_prepared(query, (week_year,))
+        return [dict(row._asdict()) for row in rows]
+
+    def insert_weekly_digest(
+        self,
+        year: int,
+        week_number: int,
+        project_area: str,
+        channel: str,
+        articles_count: int,
+        message_ts: str = None,
+    ):
+        """Insert a weekly digest record."""
+        query = """
+            INSERT INTO governance_weekly_digests (
+                year, week_number, digest_id, project_area, channel,
+                articles_count, message_ts, sent_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """
+        self.execute_prepared(query, (
+            year,
+            week_number,
+            uuid.uuid4(),
+            project_area,
+            channel,
+            articles_count,
+            message_ts,
+            datetime.utcnow(),
+        ))
+
+    def get_weekly_digest(self, year: int, week_number: int) -> List[Dict]:
+        """Get weekly digest records for a given week."""
+        query = """
+            SELECT * FROM governance_weekly_digests
+            WHERE year = ? AND week_number = ?
+        """
+        rows = self.execute_prepared(query, (year, week_number))
+        return [dict(row._asdict()) for row in rows]
+
 
 class RedisManager:
     """Redis cache and queue manager."""
@@ -517,6 +650,53 @@ CREATE TABLE IF NOT EXISTS governance_pipeline_runs (
 -- Create indexes
 CREATE INDEX IF NOT EXISTS idx_governance_articles_status ON governance_articles (status);
 CREATE INDEX IF NOT EXISTS idx_governance_articles_project ON governance_articles (project_area);
+
+-- Slack messages for feedback correlation (week-partitioned for efficient queries)
+CREATE TABLE IF NOT EXISTS governance_slack_messages (
+    week_year text,
+    message_ts text,
+    channel text,
+    article_id uuid,
+    source_id text,
+    published_date date,
+    project_area text,
+    title text,
+    url text,
+    summary text,
+    sent_at timestamp,
+    PRIMARY KEY ((week_year), message_ts)
+) WITH CLUSTERING ORDER BY (message_ts DESC);
+
+-- Article feedback from Slack users
+CREATE TABLE IF NOT EXISTS governance_article_feedback (
+    week_year text,
+    feedback_id uuid,
+    article_id uuid,
+    message_ts text,
+    channel text,
+    user_id text,
+    user_name text,
+    feedback_type text,
+    comment text,
+    created_at timestamp,
+    PRIMARY KEY ((week_year), feedback_id)
+) WITH CLUSTERING ORDER BY (feedback_id DESC);
+
+-- Weekly digest tracking
+CREATE TABLE IF NOT EXISTS governance_weekly_digests (
+    year int,
+    week_number int,
+    digest_id uuid,
+    project_area text,
+    channel text,
+    articles_count int,
+    message_ts text,
+    sent_at timestamp,
+    PRIMARY KEY ((year), week_number, digest_id)
+) WITH CLUSTERING ORDER BY (week_number DESC, digest_id DESC);
+
+-- Index for looking up feedback by article
+CREATE INDEX IF NOT EXISTS idx_governance_feedback_article ON governance_article_feedback (article_id);
 """
 
 

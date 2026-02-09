@@ -1,0 +1,28 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: "crawler"
+    static_configs:
+      - targets: ["health-crawler:8001"]
+
+  - job_name: "dedup"
+    static_configs:
+      - targets: ["health-dedup:8002"]
+
+  - job_name: "extraction"
+    static_configs:
+      - targets: ["health-extraction-1:8003"]
+
+  - job_name: "llm"
+    static_configs:
+      - targets: ["health-llm:8004"]
+
+  - job_name: "notification"
+    static_configs:
+      - targets: ["health-notification:8005"]
+
+  - job_name: "orchestrator"
+    static_configs:
+      - targets: ["health-orchestrator:8006"]
