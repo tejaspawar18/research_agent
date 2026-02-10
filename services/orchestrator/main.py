@@ -111,7 +111,6 @@ class PipelineOrchestrator:
         })
 
         try:
-            # Step 1: Crawl new articles
             articles = []
             if not skip_crawl:
                 run.status = "crawling"
@@ -124,12 +123,9 @@ class PipelineOrchestrator:
                 run.articles_crawled = len(articles)
                 PIPELINE_STAGE_ARTICLES.labels(stage="crawled").set(run.articles_crawled)
 
-            # Step 1b: Load incomplete articles from previous runs (yesterday + today only)
-            # This allows resuming processing for articles that failed mid-pipeline
             run.status = "loading_incomplete"
             incomplete_articles = self._load_incomplete_articles(days=3, limit=500)
 
-            # Log count and limit to 100 if more
             if incomplete_articles:
                 total_incomplete = len(incomplete_articles)
                 logger.info(f"Found {total_incomplete} incomplete articles from previous runs")
@@ -143,20 +139,17 @@ class PipelineOrchestrator:
             # These articles already passed dedup in a previous run (status=unique).
             # They will be added directly to needs_extraction after dedup step.
 
-            # Publish crawled articles to Kafka
             if articles:
                 await kafka_manager.publish_articles(
                     "crawled", [a.model_dump(mode='json') for a in articles], run.run_id
                 )
 
-            # Step 2: Deduplicate (only for new/unique articles, not already-extracted ones)
             run.status = "deduplicating"
             unique_articles = await self._deduplicate(articles)
             run.articles_deduplicated = len(unique_articles)
             PIPELINE_STAGE_ARTICLES.labels(stage="deduplicated").set(run.articles_deduplicated)
             logger.info(f"Deduplicated to {len(unique_articles)} articles")
 
-            # Publish deduplicated articles to Kafka
             if unique_articles:
                 await kafka_manager.publish_articles(
                     "deduplicated", [a.model_dump(mode='json') for a in unique_articles], run.run_id
@@ -172,12 +165,10 @@ class PipelineOrchestrator:
 
             logger.info(f"Status breakdown: {len(needs_extraction)} need extraction, {len(already_extracted)} already extracted, {len(already_processed)} already processed")
 
-            # Step 3: Extract Full Text (only for articles that need it)
-            extracted_articles = already_extracted  # Start with already extracted
+            extracted_articles = already_extracted
             if not skip_extraction and needs_extraction:
                 run.status = "extracting"
                 newly_extracted = await self._extract_fulltext(needs_extraction)
-                # Add articles: full_text preferred, abstract fallback for 100+ chars
                 full_text_count = 0
                 abstract_fallback_count = 0
                 for a in newly_extracted:
@@ -190,7 +181,6 @@ class PipelineOrchestrator:
                         extracted_articles.append(a)
                         abstract_fallback_count += 1
                         CONTENT_TYPE_COUNTER.labels(content_type="abstract_only").inc()
-                        # Update status in DB for abstract-fallback articles
                         try:
                             db_manager.update_article_status(
                                 source_id=a.source_id,
@@ -203,13 +193,11 @@ class PipelineOrchestrator:
                 PIPELINE_STAGE_ARTICLES.labels(stage="extracted").set(len(extracted_articles))
                 logger.info(f"Extracted: {full_text_count} full text, {abstract_fallback_count} abstract-only")
 
-                # Publish extracted articles to Kafka
                 await kafka_manager.publish_articles(
                     "extracted", [a.model_dump() for a in extracted_articles], run.run_id
                 )
 
-            # Step 4: LLM Processing (only for articles that need it)
-            processed_articles = list(already_processed)  # Start with already processed
+            processed_articles = list(already_processed)
             if not skip_llm:
                 run.status = "processing"
                 newly_processed = await self._llm_process(extracted_articles)
@@ -221,13 +209,11 @@ class PipelineOrchestrator:
             else:
                 processed_articles.extend(extracted_articles)
 
-            # Publish processed articles to Kafka
             if processed_articles:
                 await kafka_manager.publish_articles(
                     "processed", [a.model_dump() for a in processed_articles], run.run_id
                 )
 
-            # Save articles to JSON file for inspection
             articles_dicts = [article.model_dump() for article in processed_articles]
             try:
                 os.makedirs("/app/data", exist_ok=True)
@@ -238,7 +224,6 @@ class PipelineOrchestrator:
             except Exception as e:
                 logger.warning(f"Failed to save articles to JSON file: {e}")
 
-            # Step 5: Store in ScyllaDB
             run.status = "storing"
             for article in processed_articles:
                 try:
@@ -248,11 +233,9 @@ class PipelineOrchestrator:
 
             logger.info(f"Stored {len(processed_articles)} articles in ScyllaDB")
 
-            # Step 5b: Backup to S3
             if articles_dicts:
                 s3_manager.upload_articles(articles_dicts, run.run_id, stage="processed")
 
-            # Step 6: Notify
             if not skip_notify and processed_articles:
                 run.status = "notifying"
                 notified = await self._notify(processed_articles)
@@ -265,7 +248,6 @@ class PipelineOrchestrator:
             PIPELINE_RUNS.labels(status="completed").inc()
             logger.info(f"Pipeline {run.run_id} completed successfully")
 
-            # Publish pipeline completed event
             await kafka_manager.publish_event("pipeline_completed", {
                 "run_id": run.run_id,
                 "articles_crawled": run.articles_crawled,
@@ -281,7 +263,6 @@ class PipelineOrchestrator:
             run.errors.append(str(e))
             PIPELINE_RUNS.labels(status="failed").inc()
 
-            # Publish pipeline failed event
             await kafka_manager.publish_event("pipeline_failed", {
                 "run_id": run.run_id,
                 "error": str(e),
@@ -301,7 +282,6 @@ class PipelineOrchestrator:
     async def _crawl(self, source_ids: Optional[List[str]]) -> List[Article]:
         try:
             async with httpx.AsyncClient(timeout=600.0) as client:
-                # Trigger crawl (v2 crawler stores directly to ScyllaDB)
                 response = await client.post(
                     f"{CRAWLER_URL}/crawl/trigger",
                     json={"source_ids": source_ids, "max_articles_per_source": 50}
@@ -312,7 +292,6 @@ class PipelineOrchestrator:
                 if trigger_result.get("status") == "busy":
                     logger.warning("Crawler is busy, waiting...")
 
-                # Poll /crawl/status until is_running becomes False
                 for _ in range(120):
                     await asyncio.sleep(5)
                     status_resp = await client.get(f"{CRAWLER_URL}/crawl/status")
@@ -324,7 +303,6 @@ class PipelineOrchestrator:
                         )
                         break
 
-                # Load unique articles from ScyllaDB (crawler stores with status='unique')
                 articles = []
                 today = date.today()
                 if source_ids:
@@ -337,7 +315,6 @@ class PipelineOrchestrator:
                                 except Exception:
                                     pass
                 else:
-                    # Load from all sources for today
                     rows = db_manager.get_recent_articles(days=3, limit=500)
                     for row in rows:
                         if row.get("status") == "unique":
@@ -407,11 +384,9 @@ class PipelineOrchestrator:
                     if article.doi:
                         extraction_data["doi"] = article.doi
 
-                    # Add PDF URL if available
                     if hasattr(article, 'pdf_url') and article.pdf_url:
                         extraction_data["pdf_url"] = article.pdf_url
 
-                    # Call extraction service
                     response = requests.post(
                         f"{EXTRACTION_URL}/extract",
                         json=extraction_data,
@@ -425,7 +400,6 @@ class PipelineOrchestrator:
                             article.status = ArticleStatus.EXTRACTED
                             extracted_count += 1
 
-                            # Update published_date if extraction found a more accurate one
                             extracted_date = result.get("published_date")
                             if extracted_date:
                                 try:
@@ -435,7 +409,6 @@ class PipelineOrchestrator:
 
                             logger.debug(f"Extracted {result['char_count']} chars using {result['method_used']} for {article.url}")
 
-                            # Upload raw article to S3
                             try:
                                 s3_manager.upload_article(
                                     article_dict=article.model_dump(),
@@ -444,7 +417,6 @@ class PipelineOrchestrator:
                             except Exception as s3_err:
                                 logger.warning(f"S3 article upload failed for {article.url}: {s3_err}")
 
-                            # Update status in DB to 'extracted'
                             try:
                                 db_manager.update_article_status(
                                     source_id=article.source_id,
@@ -470,11 +442,10 @@ class PipelineOrchestrator:
     
     async def _llm_process(self, articles: List[Article]) -> List[Article]:
         processed = []
-        BATCH_SIZE = 10  # Process in smaller batches to avoid timeout
+        BATCH_SIZE = 10
 
         try:
             async with httpx.AsyncClient(timeout=300.0) as client:
-                # Process in batches
                 for i in range(0, len(articles), BATCH_SIZE):
                     batch = articles[i:i + BATCH_SIZE]
                     logger.info(f"LLM processing batch {i // BATCH_SIZE + 1}/{(len(articles) + BATCH_SIZE - 1) // BATCH_SIZE} ({len(batch)} articles)")
@@ -520,7 +491,6 @@ class PipelineOrchestrator:
 
                     except Exception as batch_err:
                         logger.warning(f"LLM batch {i // BATCH_SIZE + 1} failed: {batch_err}")
-                        # Continue with next batch instead of failing entirely
 
                 logger.info(f"LLM processing complete: {len(processed)}/{len(articles)} processed")
                 return processed if processed else articles
@@ -532,18 +502,18 @@ class PipelineOrchestrator:
     async def _notify(self, articles: List[Article]) -> int:
         """Send each article as individual Slack message.
 
-        Limits: max 40 articles per run, only sends between 9 AM - 7 PM IST.
+        Limits: max 40 articles per run, only sends between 9:30 AM - 6:30 PM IST.
         """
-        # Check IST time window (9 AM - 7 PM)
         now_ist = datetime.now(IST)
-        if now_ist.hour < 9 or now_ist.hour >= 19:
-            logger.info(f"Outside notification window (9 AM - 7 PM IST). Current IST time: {now_ist.strftime('%H:%M')}. Skipping notifications.")
+        notify_start = now_ist.replace(hour=9, minute=30, second=0, microsecond=0)
+        notify_end = now_ist.replace(hour=18, minute=30, second=0, microsecond=0)
+        if now_ist < notify_start or now_ist > notify_end:
+            logger.info(f"Outside notification window (9:30 AM - 6:30 PM IST). Current IST time: {now_ist.strftime('%H:%M')}. Skipping notifications.")
             return 0
 
         notified = 0
         MAX_NOTIFY = 40
 
-        # Filter out articles without a specific project area or unscored articles
         relevant_articles = [
             a for a in articles
             if a.project_area and a.project_area != "general"
@@ -906,12 +876,20 @@ orchestrator = PipelineOrchestrator()
 
 
 def setup_scheduler():
-    schedule = config.pipeline.schedule
     try:
-        parts = schedule.split()
-        trigger = CronTrigger(minute=parts[0], hour=parts[1], day=parts[2], month=parts[3], day_of_week=parts[4])
-        scheduler.add_job(scheduled_run, trigger, id="daily_pipeline", replace_existing=True)
-        logger.info(f"Scheduled pipeline: {schedule}")
+        # Pipeline (crawl + extraction + LLM, no notification): 8 AM IST (2:30 AM UTC) and 2 PM IST (8:30 AM UTC), every day
+        pipeline_morning = CronTrigger(hour=2, minute=30)
+        scheduler.add_job(scheduled_pipeline_run, pipeline_morning, id="pipeline_morning", replace_existing=True)
+        logger.info("Scheduled pipeline morning run: 8:00 AM IST (2:30 AM UTC)")
+
+        pipeline_afternoon = CronTrigger(hour=8, minute=30)
+        scheduler.add_job(scheduled_pipeline_run, pipeline_afternoon, id="pipeline_afternoon", replace_existing=True)
+        logger.info("Scheduled pipeline afternoon run: 2:00 PM IST (8:30 AM UTC)")
+
+        # Notification only: every 30 min, 9:30 AM - 6:30 PM IST (4:00 AM - 1:00 PM UTC), weekdays only
+        notif_trigger = CronTrigger(hour='4-13', minute='0,30', day_of_week='mon-fri')
+        scheduler.add_job(scheduled_notification_run, notif_trigger, id="notification_run", replace_existing=True)
+        logger.info("Scheduled notification run: every 30 min, 9:30 AM - 6:30 PM IST, Mon-Fri")
 
         # Weekly digest: Monday 9 AM IST (3:30 AM UTC)
         digest_trigger = CronTrigger(minute=30, hour=3, day_of_week="mon")
@@ -921,8 +899,27 @@ def setup_scheduler():
         logger.error(f"Scheduler setup failed: {e}")
 
 
+async def scheduled_pipeline_run():
+    """Crawl + extraction + LLM only (no notification). Runs at 8 AM and 2 PM IST every day."""
+    logger.info("Starting scheduled pipeline run (crawl + extraction + LLM)")
+    await orchestrator.run_pipeline(skip_notify=True)
+
+
+async def scheduled_notification_run():
+    """Notification-only run. Fires every 30 min but is guarded to 9:30 AM - 6:30 PM IST, weekdays only."""
+    now_ist = datetime.now(IST)
+    notify_start = now_ist.replace(hour=9, minute=30, second=0, microsecond=0)
+    notify_end = now_ist.replace(hour=18, minute=30, second=0, microsecond=0)
+    if now_ist < notify_start or now_ist > notify_end:
+        logger.debug(f"Outside notification window (9:30 AM - 6:30 PM IST). Current IST: {now_ist.strftime('%H:%M')}. Skipping.")
+        return
+    logger.info(f"Starting scheduled notification run at IST {now_ist.strftime('%H:%M')}")
+    await orchestrator.run_pipeline(skip_crawl=True, skip_extraction=True, skip_llm=True)
+
+
 async def scheduled_run():
-    logger.info("Starting scheduled pipeline run")
+    """Full pipeline run (manual/legacy use)."""
+    logger.info("Starting full scheduled pipeline run")
     await orchestrator.run_pipeline()
 
 
