@@ -99,7 +99,11 @@ class RSSCrawler(BaseCrawler):
                 parsed_time = entry.get(date_field)
                 if parsed_time:
                     try:
-                        pub_date = datetime(*parsed_time[:6])
+                        candidate = datetime(*parsed_time[:6])
+                        # Cap future dates — feedparser may return ahead-of-print dates
+                        if candidate.date() > date.today():
+                            candidate = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+                        pub_date = candidate
                         break
                     except (ValueError, TypeError):
                         continue

@@ -175,7 +175,7 @@ Create a `.env` file in the project root:
 # LLM
 LLM_PROVIDER=openai
 LLM_API_KEY=sk-...
-LLM_MODEL=gpt-4-turbo
+LLM_MODEL=gpt-4o-mini
 
 # Slack
 SLACK_BOT_TOKEN=xoxb-...

@@ -32,7 +32,7 @@ class LLMConfig(BaseModel):
     """LLM configuration."""
     provider: str = "openai"
     api_key: Optional[str] = None
-    model: str = "gpt-4-turbo"
+    model: str = "gpt-4o-mini"
     max_tokens: int = 2000
     temperature: float = 0.3
 
@@ -40,12 +40,18 @@ class LLMConfig(BaseModel):
 class PipelineConfig(BaseModel):
     """Pipeline configuration."""
     schedule: str = "*/30 3-13 * * *"  # Every 30 minutes, 9 AM - 7 PM IST (UTC+5:30)
-    max_articles_per_run: int = 500
-    max_articles_per_source: int = 50
+    max_articles_per_run: int = 5000
+    max_articles_per_source: int = 500
     relevance_threshold: float = 60.0
     parallel_crawlers: int = 5
     dedup_similarity_threshold: float = 0.85
-    
+
+    # Article date window
+    crawl_lookback_days: int = 7          # How many days back to load articles from DB after crawl
+    incomplete_lookback_days: int = 7     # How many days back to look for incomplete articles
+    max_articles_per_source_query: int = 500   # Per-source per-date DB query limit
+    max_notification_articles: int = 40   # Max articles sent to Slack per run
+
     # Quality filters
     min_sample_size_observational: int = 150
     min_sample_size_rct: int = 50
@@ -70,7 +76,7 @@ class Settings(BaseSettings):
     # LLM
     llm_provider: str = "openai"
     llm_api_key: Optional[str] = None
-    llm_model: str = "gpt-4-turbo"
+    llm_model: str = "gpt-40-mini"
     
     # Slack
     slack_bot_token: Optional[str] = None

@@ -161,7 +161,7 @@ class LLMProvider:
     def __init__(self):
         self.provider = os.getenv("LLM_PROVIDER", "openai").lower()
         self.api_key = os.getenv("LLM_API_KEY")
-        self.model = os.getenv("LLM_MODEL", "gpt-4-turbo")
+        self.model = os.getenv("LLM_MODEL", "gpt-4o-mini")
     
     async def complete(
         self,
@@ -257,7 +257,7 @@ class LLMProvider:
                 })
 
         # Use gemini-2.0-flash model
-        model = self.model or "gemini-2.5-flash"
+        model = self.model or "gemini-2.0-flash"
         url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={self.api_key}"
 
         payload = {

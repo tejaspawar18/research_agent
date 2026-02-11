@@ -5,7 +5,7 @@ import hashlib
 import re
 import logging
 from typing import Optional, List, Dict, Any
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 import unicodedata
 from urllib.parse import urlparse, urljoin
 
@@ -208,11 +208,17 @@ def parse_date_string(date_str: str) -> Optional[datetime]:
 
     date_str = date_str.strip()
 
+    def _cap_future(dt: datetime) -> datetime:
+        """Return dt unchanged, or today if dt is in the future."""
+        if dt.date() > date.today():
+            return datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+        return dt
+
     # Try RFC 2822 format first (common in RSS feeds)
     # e.g. "Mon, 03 Feb 2026 12:00:00 GMT"
     try:
         from email.utils import parsedate_to_datetime
-        return parsedate_to_datetime(date_str)
+        return _cap_future(parsedate_to_datetime(date_str))
     except (ValueError, TypeError):
         pass
 
@@ -221,17 +227,19 @@ def parse_date_string(date_str: str) -> Optional[datetime]:
         # Handle timezone-aware ISO strings
         if '+' in date_str[10:] or date_str.endswith('Z'):
             clean = date_str.replace('Z', '+00:00')
-            return datetime.fromisoformat(clean)
+            return _cap_future(datetime.fromisoformat(clean))
     except (ValueError, TypeError, IndexError):
         pass
 
+    # Scientific sources (PubMed, Nature, NEJM, RSS) use ISO 8601 or
+    # American month-first formats; European day-first (%d-%m-%Y, %d/%m/%Y)
+    # is intentionally excluded to avoid month/day swap bugs.
     formats = [
         "%Y-%m-%dT%H:%M:%S",
         "%Y-%m-%dT%H:%M:%S.%f",
         "%Y-%m-%d",
         "%Y/%m/%d",
-        "%d-%m-%Y",
-        "%d/%m/%Y",
+        "%m/%d/%Y",
         "%B %d, %Y",
         "%b %d, %Y",
         "%d %B %Y",
@@ -246,13 +254,23 @@ def parse_date_string(date_str: str) -> Optional[datetime]:
         "%Y",
     ]
 
+    parsed = None
     for fmt in formats:
         try:
-            return datetime.strptime(date_str, fmt)
+            parsed = datetime.strptime(date_str, fmt)
+            break
         except (ValueError, AttributeError):
             continue
 
-    return None
+    if parsed is None:
+        return None
+
+    # Reject future dates — articles cannot be published in the future.
+    # Ahead-of-print and pre-publication dates are capped to today.
+    if parsed.date() > date.today():
+        return datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
+
+    return parsed
 
 
 def is_recent(dt: datetime, days: int = 7) -> bool:

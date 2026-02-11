@@ -274,14 +274,17 @@ class PubMedCrawler(BaseCrawler):
                 if year is not None and year.text:
                     date_str = year.text
                     if month is not None and month.text:
-                        # Handle month names
                         month_text = month.text
                         if month_text.isdigit():
+                            # Numeric month: "2026-02-07" → matches %Y-%m-%d
                             date_str += f"-{month_text.zfill(2)}"
+                            if day is not None and day.text:
+                                date_str += f"-{day.text.zfill(2)}"
                         else:
+                            # Named month: "2026 Feb 7" → matches %Y %b %d
                             date_str += f" {month_text}"
-                        if day is not None and day.text:
-                            date_str += f"-{day.text.zfill(2)}"
+                            if day is not None and day.text:
+                                date_str += f" {day.text}"
                     
                     pub_date = parse_date_string(date_str)
             

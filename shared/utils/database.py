@@ -446,7 +446,7 @@ class ScyllaDBManager:
         ))
 
     def get_positive_feedback_articles(self, week_year: str) -> List[Dict]:
-        """Get articles with positive feedback for a given week (no ALLOW FILTERING)."""
+        """Get articles with positive feedback for a given week."""
         query = """
             SELECT * FROM governance_article_feedback
             WHERE week_year = ?
@@ -564,14 +564,14 @@ class RedisManager:
     async def check_url_seen(self, url_hash: str) -> bool:
         return await self.exists(f"seen:url:{url_hash}")
     
-    async def mark_url_seen(self, url_hash: str, article_id: str, ttl: int = 604800):
-        await self.set(f"seen:url:{url_hash}", article_id, ttl)
-    
+    async def mark_url_seen(self, url_hash: str, article_id: str):
+        await self.set(f"seen:url:{url_hash}", article_id)
+
     async def check_content_seen(self, content_hash: str) -> bool:
         return await self.exists(f"seen:content:{content_hash}")
-    
-    async def mark_content_seen(self, content_hash: str, article_id: str, ttl: int = 604800):
-        await self.set(f"seen:content:{content_hash}", article_id, ttl)
+
+    async def mark_content_seen(self, content_hash: str, article_id: str):
+        await self.set(f"seen:content:{content_hash}", article_id)
 
 
 # Schema initialization
@@ -621,7 +621,7 @@ CREATE TABLE IF NOT EXISTS governance_sources (
     config map<text, text>
 );
 
--- Deduplication index
+-- Deduplication index (no TTL — dedup records are permanent)
 CREATE TABLE IF NOT EXISTS governance_dedup_index (
     hash_type text,
     hash_value text,
@@ -629,7 +629,9 @@ CREATE TABLE IF NOT EXISTS governance_dedup_index (
     source_id text,
     created_at timestamp,
     PRIMARY KEY ((hash_type), hash_value)
-) WITH default_time_to_live = 604800;
+);
+-- Remove TTL on existing table if it was previously created with one
+ALTER TABLE governance_dedup_index WITH default_time_to_live = 0;
 
 -- Pipeline runs
 CREATE TABLE IF NOT EXISTS governance_pipeline_runs (

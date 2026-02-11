@@ -124,7 +124,7 @@ class PipelineOrchestrator:
                 PIPELINE_STAGE_ARTICLES.labels(stage="crawled").set(run.articles_crawled)
 
             run.status = "loading_incomplete"
-            incomplete_articles = self._load_incomplete_articles(days=3, limit=500)
+            incomplete_articles = self._load_incomplete_articles(days=config.pipeline.incomplete_lookback_days, limit=config.pipeline.max_articles_per_run)
 
             if incomplete_articles:
                 total_incomplete = len(incomplete_articles)
@@ -305,17 +305,21 @@ class PipelineOrchestrator:
 
                 articles = []
                 today = date.today()
+                lookback = config.pipeline.crawl_lookback_days
+                per_source_limit = config.pipeline.max_articles_per_source_query
                 if source_ids:
                     for sid in source_ids:
-                        rows = db_manager.get_articles_by_date(sid, today, limit=100)
-                        for row in rows:
-                            if row.get("status") == "unique":
-                                try:
-                                    articles.append(Article.model_validate(row))
-                                except Exception:
-                                    pass
+                        for i in range(lookback):
+                            query_date = today - timedelta(days=i)
+                            rows = db_manager.get_articles_by_date(sid, query_date, limit=per_source_limit)
+                            for row in rows:
+                                if row.get("status") == "unique":
+                                    try:
+                                        articles.append(Article.model_validate(row))
+                                    except Exception:
+                                        pass
                 else:
-                    rows = db_manager.get_recent_articles(days=3, limit=500)
+                    rows = db_manager.get_recent_articles(days=lookback, limit=config.pipeline.max_articles_per_run)
                     for row in rows:
                         if row.get("status") == "unique":
                             try:
@@ -366,6 +370,16 @@ class PipelineOrchestrator:
 
             for article in articles:
                 try:
+                    # Redis guard: skip if already extracted
+                    extracted_key = f"extracted:{article.article_id}"
+                    try:
+                        if await redis_manager.exists(extracted_key):
+                            logger.debug(f"Skipping already-extracted article (Redis guard): {article.article_id}")
+                            article.status = ArticleStatus.EXTRACTED
+                            continue
+                    except Exception as redis_err:
+                        logger.warning(f"Redis check failed for {extracted_key}, proceeding: {redis_err}")
+
                     # Prepare extraction request
                     extraction_data = {
                         "url": article.url,
@@ -426,6 +440,12 @@ class PipelineOrchestrator:
                                 )
                             except Exception as db_err:
                                 logger.warning(f"Failed to update status for {article.article_id}: {db_err}")
+
+                            # Mark as extracted in Redis (no TTL) so it's never re-extracted
+                            try:
+                                await redis_manager.set(f"extracted:{article.article_id}", "1")
+                            except Exception as redis_err:
+                                logger.warning(f"Redis set failed for extracted:{article.article_id}: {redis_err}")
                         else:
                             logger.debug(f"Extraction failed for {article.url}: {result.get('error', 'Unknown error')}")
 
@@ -445,10 +465,28 @@ class PipelineOrchestrator:
         BATCH_SIZE = 10
 
         try:
+            # Redis guard: filter out articles already LLM-processed
+            unprocessed = []
+            for article in articles:
+                processed_key = f"processed:{article.article_id}"
+                try:
+                    if await redis_manager.exists(processed_key):
+                        logger.debug(f"Skipping already-processed article (Redis guard): {article.article_id}")
+                        article.status = ArticleStatus.PROCESSED
+                        processed.append(article)
+                        continue
+                except Exception as redis_err:
+                    logger.warning(f"Redis check failed for {processed_key}, proceeding: {redis_err}")
+                unprocessed.append(article)
+
+            if not unprocessed:
+                logger.info("All articles already LLM-processed (Redis guard). Skipping LLM.")
+                return processed
+
             async with httpx.AsyncClient(timeout=300.0) as client:
-                for i in range(0, len(articles), BATCH_SIZE):
-                    batch = articles[i:i + BATCH_SIZE]
-                    logger.info(f"LLM processing batch {i // BATCH_SIZE + 1}/{(len(articles) + BATCH_SIZE - 1) // BATCH_SIZE} ({len(batch)} articles)")
+                for i in range(0, len(unprocessed), BATCH_SIZE):
+                    batch = unprocessed[i:i + BATCH_SIZE]
+                    logger.info(f"LLM processing batch {i // BATCH_SIZE + 1}/{(len(unprocessed) + BATCH_SIZE - 1) // BATCH_SIZE} ({len(batch)} articles)")
 
                     try:
                         response = await client.post(
@@ -489,11 +527,17 @@ class PipelineOrchestrator:
                                 except Exception as db_err:
                                     logger.warning(f"Failed to update status for {article.article_id}: {db_err}")
 
+                                # Mark as processed in Redis (no TTL) so it's never re-processed
+                                try:
+                                    await redis_manager.set(f"processed:{article.article_id}", "1")
+                                except Exception as redis_err:
+                                    logger.warning(f"Redis set failed for processed:{article.article_id}: {redis_err}")
+
                     except Exception as batch_err:
                         logger.warning(f"LLM batch {i // BATCH_SIZE + 1} failed: {batch_err}")
 
                 logger.info(f"LLM processing complete: {len(processed)}/{len(articles)} processed")
-                return processed if processed else articles
+                return processed if processed else unprocessed
 
         except Exception as e:
             logger.error(f"LLM processing failed: {e}")
@@ -512,7 +556,7 @@ class PipelineOrchestrator:
             return 0
 
         notified = 0
-        MAX_NOTIFY = 40
+        MAX_NOTIFY = config.pipeline.max_notification_articles
 
         relevant_articles = [
             a for a in articles
@@ -523,12 +567,40 @@ class PipelineOrchestrator:
         if filtered_count:
             logger.info(f"Filtered out {filtered_count} articles with no specific project area or low relevance")
 
+        # Pre-filter: remove articles already notified (Redis check BEFORE capping)
+        # This prevents already-notified articles from eating up notification slots
+        pending_articles = []
+        already_notified_count = 0
+        for article in relevant_articles:
+            notify_key = f"notified:{article.article_id}"
+            try:
+                if await redis_manager.exists(notify_key):
+                    already_notified_count += 1
+                    # Sync DB status so _load_incomplete_articles stops reloading this article
+                    article.status = ArticleStatus.NOTIFIED
+                    try:
+                        db_manager.update_article_status(
+                            source_id=article.source_id,
+                            published_date=article.published_date,
+                            article_id=article.article_id,
+                            status="notified",
+                        )
+                    except Exception as db_err:
+                        logger.warning(f"DB status sync failed for already-notified {article.article_id}: {db_err}")
+                    continue
+            except Exception as redis_err:
+                logger.warning(f"Redis check failed for {notify_key}, including in pending: {redis_err}")
+            pending_articles.append(article)
+
+        if already_notified_count:
+            logger.info(f"Pre-filtered {already_notified_count} already-notified articles (Redis). {len(pending_articles)} pending.")
+
         # Sort by evidence level (highest first) and cap at MAX_NOTIFY
-        all_sorted = sorted(relevant_articles, key=lambda a: (a.evidence_level or 0), reverse=True)
+        all_sorted = sorted(pending_articles, key=lambda a: (a.evidence_level or 0), reverse=True)
         sorted_articles = all_sorted[:MAX_NOTIFY]
 
-        if len(relevant_articles) > MAX_NOTIFY:
-            logger.info(f"Capping notifications at {MAX_NOTIFY} articles (total: {len(relevant_articles)})")
+        if len(pending_articles) > MAX_NOTIFY:
+            logger.info(f"Capping notifications at {MAX_NOTIFY} articles (total: {len(pending_articles)})")
             # Mark overflow articles as notified so they don't retry indefinitely
             for overflow_article in all_sorted[MAX_NOTIFY:]:
                 overflow_article.status = ArticleStatus.NOTIFIED
@@ -539,32 +611,12 @@ class PipelineOrchestrator:
                         article_id=overflow_article.article_id,
                         status="notified",
                     )
-                except Exception:
-                    pass
+                except Exception as db_err:
+                    logger.warning(f"DB status update failed for overflow article {overflow_article.article_id}: {db_err}")
 
         try:
             async with httpx.AsyncClient(timeout=60.0) as client:
                 for article in sorted_articles:
-                    # Skip articles already notified (Redis guard against duplicates)
-                    notify_key = f"notified:{article.article_id}"
-                    try:
-                        already_notified = await redis_manager.exists(notify_key)
-                        if already_notified:
-                            logger.info(f"Skipping already-notified article (Redis guard): {article.title[:50]}")
-                            # Sync DB status so _load_incomplete_articles stops reloading this article
-                            article.status = ArticleStatus.NOTIFIED
-                            try:
-                                db_manager.update_article_status(
-                                    source_id=article.source_id,
-                                    published_date=article.published_date,
-                                    article_id=article.article_id,
-                                    status="notified",
-                                )
-                            except Exception:
-                                pass
-                            continue
-                    except Exception as redis_err:
-                        logger.warning(f"Redis check failed for {notify_key}, proceeding without guard: {redis_err}")
 
                     area = article.project_area
                     channel = config.slack.channels.get(area, "#research-general")
@@ -584,9 +636,9 @@ class PipelineOrchestrator:
                                 article.status = ArticleStatus.NOTIFIED
                                 message_ts = result.get("message_ts")
 
-                                # Mark as notified in Redis (7-day TTL) to prevent duplicates
+                                # Mark as notified in Redis (no TTL) to permanently prevent duplicates
                                 try:
-                                    await redis_manager.set(notify_key, "1", expire=604800)
+                                    await redis_manager.set(notify_key, "1")
                                 except Exception as redis_err:
                                     logger.warning(f"Redis set failed for {notify_key}: {redis_err}")
                                 try:
