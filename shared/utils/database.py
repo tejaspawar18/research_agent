@@ -423,7 +423,9 @@ class ScyllaDBManager:
         user_id: str,
         user_name: str,
         feedback_type: str,
+        feedback_id: Any = None,
         comment: str = None,
+        created_at: datetime = None,
     ):
         """Insert article feedback from Slack user."""
         query = """
@@ -432,9 +434,16 @@ class ScyllaDBManager:
                 user_id, user_name, feedback_type, comment, created_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """
+        if feedback_id is None:
+            feedback_uuid = uuid.uuid4()
+        elif isinstance(feedback_id, uuid.UUID):
+            feedback_uuid = feedback_id
+        else:
+            feedback_uuid = uuid.UUID(str(feedback_id))
+
         self.execute_prepared(query, (
             week_year,
-            uuid.uuid4(),
+            feedback_uuid,
             uuid.UUID(article_id),
             message_ts,
             channel,
@@ -442,8 +451,20 @@ class ScyllaDBManager:
             user_name,
             feedback_type,
             comment,
-            datetime.utcnow(),
+            created_at or datetime.utcnow(),
         ))
+
+    def delete_article_feedback(self, week_year: str, feedback_id: Any):
+        """Delete a feedback row by deterministic id."""
+        query = """
+            DELETE FROM governance_article_feedback
+            WHERE week_year = ? AND feedback_id = ?
+        """
+        if isinstance(feedback_id, uuid.UUID):
+            feedback_uuid = feedback_id
+        else:
+            feedback_uuid = uuid.UUID(str(feedback_id))
+        self.execute_prepared(query, (week_year, feedback_uuid))
 
     def get_positive_feedback_articles(self, week_year: str) -> List[Dict]:
         """Get articles with positive feedback for a given week."""

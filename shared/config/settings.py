@@ -15,6 +15,7 @@ logger = logging.getLogger(__name__)
 class SlackConfig(BaseModel):
     """Slack configuration."""
     bot_token: Optional[str] = None
+    app_token: Optional[str] = None
     signing_secret: Optional[str] = None
     
     # Channel mappings for project areas
@@ -175,6 +176,7 @@ class Settings(BaseSettings):
     llm_model: str = "gpt-4o-mini"
     # Slack
     slack_bot_token: Optional[str] = None
+    slack_app_token: Optional[str] = None
     slack_signing_secret: Optional[str] = None
 
     # Service URLs
@@ -277,6 +279,7 @@ class ConfigManager:
         """Load Slack configuration."""
         self._slack = SlackConfig(
             bot_token=self.settings.slack_bot_token,
+            app_token=self.settings.slack_app_token,
             signing_secret=self.settings.slack_signing_secret,
         )
 

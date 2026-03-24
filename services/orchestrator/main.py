@@ -23,6 +23,7 @@ sys.path.insert(0, '/app')
 
 from shared.models import Article, PipelineRun, ArticleStatus, ProjectArea
 from shared.utils import ScyllaDBManager, RedisManager, KafkaManager, S3Manager, initialize_schema
+from shared.utils.slack_feedback import get_week_year, get_week_year_from_message_ts
 from shared.utils.metrics import (
     add_metrics_endpoint,
     CONTENT_TYPE_COUNTER, PIPELINE_RUNS, PIPELINE_STAGE_ARTICLES, PIPELINE_DURATION,
@@ -676,7 +677,7 @@ class PipelineOrchestrator:
                                 # Store Slack message metadata for feedback correlation
                                 if message_ts:
                                     try:
-                                        week_year = self._get_week_year()
+                                        week_year = get_week_year_from_message_ts(message_ts)
                                         db_manager.insert_slack_message(
                                             week_year=week_year,
                                             message_ts=message_ts,
@@ -801,10 +802,7 @@ class PipelineOrchestrator:
 
     def _get_week_year(self, dt: date = None) -> str:
         """Get week-year string like '2026-W06' for partition key."""
-        if dt is None:
-            dt = date.today()
-        iso_cal = dt.isocalendar()
-        return f"{iso_cal[0]}-W{iso_cal[1]:02d}"
+        return get_week_year(dt)
 
     async def send_weekly_digest(self):
         """Send weekly digest of positively-rated articles to each project channel."""

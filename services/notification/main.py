@@ -6,10 +6,11 @@ import os
 import hmac
 import hashlib
 import json
+import inspect
 import urllib.parse
 from contextlib import asynccontextmanager
-from typing import List, Dict, Optional
-from datetime import date
+from typing import Any, List, Dict, Optional
+from datetime import date, datetime, timezone
 
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import JSONResponse
@@ -19,10 +20,16 @@ import httpx
 import sys
 sys.path.insert(0, '/app')
 
-from shared.models import Article, ProjectArea, DailyDigest, SUB_TOPIC_TAGS
+from shared.models import Article, SUB_TOPIC_TAGS
 from shared.utils import RedisManager, truncate_text, ScyllaDBManager
 from shared.config import config
 from shared.utils.metrics import add_metrics_endpoint
+from shared.utils.slack_feedback import (
+    build_feedback_id,
+    get_candidate_week_years,
+    get_week_year_from_message_ts,
+    map_reaction_to_feedback_type,
+)
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -31,15 +38,18 @@ redis_manager = RedisManager()
 scylla_manager = ScyllaDBManager()
 
 # Slack signing secret for verifying interaction requests
-SLACK_SIGNING_SECRET = os.getenv("SLACK_SIGNING_SECRET", "")
+SLACK_SIGNING_SECRET = config.settings.slack_signing_secret or os.getenv("SLACK_SIGNING_SECRET", "")
 
 
-def get_week_year(dt: date = None) -> str:
-    """Get week-year string like '2026-W06' for partition key."""
-    if dt is None:
-        dt = date.today()
-    iso_cal = dt.isocalendar()
-    return f"{iso_cal[0]}-W{iso_cal[1]:02d}"
+def slack_ts_to_datetime(slack_ts: Optional[str]) -> Optional[datetime]:
+    """Convert a Slack ts string to a naive UTC datetime."""
+    if not slack_ts:
+        return None
+
+    try:
+        return datetime.fromtimestamp(float(slack_ts), tz=timezone.utc).replace(tzinfo=None)
+    except (TypeError, ValueError, OSError):
+        return None
 
 
 @asynccontextmanager
@@ -47,8 +57,10 @@ async def lifespan(app: FastAPI):
     await redis_manager.connect()
     scylla_manager.connect()
     config.load()
+    await feedback_ingestor.start()
     logger.info("Notification service started")
     yield
+    await feedback_ingestor.stop()
     await redis_manager.disconnect()
     scylla_manager.disconnect()
 
@@ -79,6 +91,215 @@ class NotifyResponse(BaseModel):
     error: Optional[str] = None
 
 
+class SlackFeedbackIngestor:
+    """Consume Slack reactions and threaded feedback and persist them to ScyllaDB."""
+
+    def __init__(self, db: ScyllaDBManager):
+        self.db = db
+        self.bot_token = config.settings.slack_bot_token or os.getenv("SLACK_BOT_TOKEN", "")
+        self.app_token = config.settings.slack_app_token or os.getenv("SLACK_APP_TOKEN", "")
+        self.socket_client = None
+        self.socket_mode_enabled = False
+        self.user_cache: Dict[str, str] = {}
+
+    async def start(self):
+        """Start Slack Socket Mode listener when tokens are available."""
+        if not self.bot_token or not self.app_token:
+            logger.info("Slack Socket Mode disabled: bot token or app token missing")
+            return
+
+        try:
+            from slack_sdk.socket_mode.aiohttp import SocketModeClient
+            from slack_sdk.web.async_client import AsyncWebClient
+        except ImportError:
+            logger.warning("slack-sdk not installed; Slack Socket Mode feedback listener disabled")
+            return
+
+        try:
+            self.socket_client = SocketModeClient(
+                app_token=self.app_token,
+                web_client=AsyncWebClient(token=self.bot_token),
+            )
+            self.socket_client.socket_mode_request_listeners.append(self._handle_socket_request)
+            await self.socket_client.connect()
+            self.socket_mode_enabled = True
+            logger.info("Slack Socket Mode feedback listener connected")
+        except Exception as exc:
+            self.socket_client = None
+            self.socket_mode_enabled = False
+            logger.warning(f"Failed to start Slack Socket Mode listener: {exc}")
+
+    async def stop(self):
+        """Stop the Slack Socket Mode listener."""
+        client = self.socket_client
+        self.socket_client = None
+        self.socket_mode_enabled = False
+
+        if not client:
+            return
+
+        try:
+            close_result = client.close()
+            if inspect.isawaitable(close_result):
+                await close_result
+        except Exception as exc:
+            logger.warning(f"Failed to stop Slack Socket Mode listener: {exc}")
+
+    async def _handle_socket_request(self, client: Any, req: Any):
+        """Handle Socket Mode events and acknowledge them immediately."""
+        try:
+            from slack_sdk.socket_mode.response import SocketModeResponse
+
+            await client.send_socket_mode_response(SocketModeResponse(envelope_id=req.envelope_id))
+        except Exception as exc:
+            logger.warning(f"Failed to acknowledge Slack Socket Mode request: {exc}")
+            return
+
+        if req.type == "events_api":
+            await self.handle_events_payload(req.payload)
+
+    async def handle_events_payload(self, payload: Dict[str, Any]):
+        """Handle a Slack Events API payload."""
+        event = payload.get("event") or {}
+        event_type = event.get("type")
+
+        if event_type in {"reaction_added", "reaction_removed"}:
+            await self._handle_reaction_event(event)
+        elif event_type == "message":
+            await self._handle_message_event(payload, event)
+
+    async def _handle_reaction_event(self, event: Dict[str, Any]):
+        item = event.get("item") or {}
+        if item.get("type") != "message":
+            return
+
+        message_ts = item.get("ts", "")
+        tracked_message = self._find_tracked_message(message_ts)
+        if not tracked_message:
+            return
+
+        channel = tracked_message.get("channel") or item.get("channel", "")
+        user_id = event.get("user", "")
+        reaction_name = event.get("reaction", "")
+        feedback_type = map_reaction_to_feedback_type(reaction_name)
+        week_year = tracked_message.get("week_year") or get_week_year_from_message_ts(message_ts)
+        feedback_id = build_feedback_id(
+            "reaction",
+            week_year,
+            channel,
+            message_ts,
+            user_id,
+            reaction_name,
+        )
+
+        if event.get("type") == "reaction_removed":
+            self.db.delete_article_feedback(week_year, feedback_id)
+            logger.info(f"Removed Slack feedback reaction {reaction_name} for message {message_ts}")
+            return
+
+        user_name = await self._lookup_user_name(user_id)
+        self.db.insert_article_feedback(
+            week_year=week_year,
+            feedback_id=feedback_id,
+            article_id=str(tracked_message.get("article_id")),
+            message_ts=message_ts,
+            channel=channel,
+            user_id=user_id,
+            user_name=user_name,
+            feedback_type=feedback_type,
+            comment=f"reaction:{reaction_name}",
+            created_at=slack_ts_to_datetime(event.get("event_ts")),
+        )
+        logger.info(f"Stored Slack reaction {reaction_name} for tracked message {message_ts}")
+
+    async def _handle_message_event(self, payload: Dict[str, Any], event: Dict[str, Any]):
+        if event.get("subtype") or event.get("bot_id"):
+            return
+
+        message_ts = event.get("ts", "")
+        thread_ts = event.get("thread_ts", "")
+        user_id = event.get("user", "")
+        text = (event.get("text") or "").strip()
+
+        if not thread_ts or thread_ts == message_ts or not user_id or not text:
+            return
+
+        tracked_message = self._find_tracked_message(thread_ts)
+        if not tracked_message:
+            return
+
+        channel = tracked_message.get("channel") or event.get("channel", "")
+        week_year = tracked_message.get("week_year") or get_week_year_from_message_ts(thread_ts)
+        user_name = await self._lookup_user_name(user_id)
+        event_id = payload.get("event_id") or message_ts
+        feedback_id = build_feedback_id(
+            "comment",
+            week_year,
+            channel,
+            thread_ts,
+            user_id,
+            event_id,
+        )
+
+        self.db.insert_article_feedback(
+            week_year=week_year,
+            feedback_id=feedback_id,
+            article_id=str(tracked_message.get("article_id")),
+            message_ts=thread_ts,
+            channel=channel,
+            user_id=user_id,
+            user_name=user_name,
+            feedback_type="comment",
+            comment=text,
+            created_at=slack_ts_to_datetime(message_ts),
+        )
+        logger.info(f"Stored Slack thread comment for tracked message {thread_ts}")
+
+    def _find_tracked_message(self, message_ts: str) -> Optional[Dict[str, Any]]:
+        """Find the stored article message across likely week partitions."""
+        for week_year in get_candidate_week_years(message_ts):
+            tracked_message = self.db.get_slack_message(week_year, message_ts)
+            if tracked_message:
+                return tracked_message
+        return None
+
+    async def _lookup_user_name(self, user_id: str) -> str:
+        """Resolve and cache a user-friendly Slack display name."""
+        if not user_id:
+            return ""
+
+        cached = self.user_cache.get(user_id)
+        if cached:
+            return cached
+
+        user_name = user_id
+        if self.bot_token:
+            try:
+                async with httpx.AsyncClient() as client:
+                    response = await client.get(
+                        "https://slack.com/api/users.info",
+                        headers={"Authorization": f"Bearer {self.bot_token}"},
+                        params={"user": user_id},
+                        timeout=config.pipeline.slack_api_timeout,
+                    )
+                result = response.json()
+                if result.get("ok"):
+                    user = result.get("user", {})
+                    profile = user.get("profile", {})
+                    user_name = (
+                        profile.get("display_name")
+                        or profile.get("real_name")
+                        or user.get("real_name")
+                        or user.get("name")
+                        or user_id
+                    )
+            except Exception as exc:
+                logger.warning(f"Failed to resolve Slack user name for {user_id}: {exc}")
+
+        self.user_cache[user_id] = user_name
+        return user_name
+
+
 EVIDENCE_BADGES = {
     5: "🟢", 4: "🟢", 3: "🟡", 2: "🟠", 1: "🔴",
 }
@@ -90,7 +311,7 @@ QUALITY_BADGES = {
 
 class SlackClient:
     def __init__(self):
-        self.bot_token = os.getenv("SLACK_BOT_TOKEN")
+        self.bot_token = config.settings.slack_bot_token or os.getenv("SLACK_BOT_TOKEN")
     
     async def post_message(self, channel: str, blocks: List[Dict], text: str) -> Dict:
         if not self.bot_token:
@@ -269,6 +490,7 @@ class MessageFormatter:
         return blocks, f"Daily digest: {len(articles)} articles"
 
 
+feedback_ingestor = SlackFeedbackIngestor(scylla_manager)
 slack_client = SlackClient()
 formatter = MessageFormatter()
 
@@ -300,7 +522,13 @@ async def list_channels():
 
 @app.get("/health")
 async def health():
-    return {"status": "healthy", "service": "notification", "slack_configured": bool(os.getenv("SLACK_BOT_TOKEN"))}
+    return {
+        "status": "healthy",
+        "service": "notification",
+        "slack_configured": bool(config.settings.slack_bot_token),
+        "slack_app_configured": bool(config.settings.slack_app_token),
+        "slack_socket_mode": feedback_ingestor.socket_mode_enabled,
+    }
 
 
 def verify_slack_signature(timestamp: str, body: bytes, signature: str) -> bool:
@@ -317,6 +545,30 @@ def verify_slack_signature(timestamp: str, body: bytes, signature: str) -> bool:
     ).hexdigest()
 
     return hmac.compare_digest(computed_sig, signature)
+
+
+@app.post("/slack/events")
+async def slack_events(request: Request):
+    """Handle Slack Events API callbacks for reactions and threaded replies."""
+    body = await request.body()
+
+    timestamp = request.headers.get("X-Slack-Request-Timestamp", "")
+    signature = request.headers.get("X-Slack-Signature", "")
+
+    if not verify_slack_signature(timestamp, body, signature):
+        raise HTTPException(status_code=401, detail="Invalid signature")
+
+    try:
+        payload = json.loads(body.decode("utf-8"))
+    except json.JSONDecodeError as exc:
+        logger.error(f"Failed to parse Slack event payload: {exc}")
+        raise HTTPException(status_code=400, detail="Invalid payload")
+
+    if payload.get("type") == "url_verification":
+        return JSONResponse(content={"challenge": payload.get("challenge", "")})
+
+    await feedback_ingestor.handle_events_payload(payload)
+    return JSONResponse(content={"ok": True})
 
 
 @app.post("/slack/interactions")
@@ -370,16 +622,30 @@ async def slack_interactions(request: Request):
                     return JSONResponse(content={})
 
                 # Store feedback in ScyllaDB
-                week_year = get_week_year()
+                message_ts = message.get("ts", "")
+                channel_id = channel.get("id", "")
+                user_id = user.get("id", "")
+                week_year = get_week_year_from_message_ts(message_ts)
+                feedback_id = build_feedback_id(
+                    "button",
+                    week_year,
+                    channel_id,
+                    message_ts,
+                    user_id,
+                    action.get("action_ts", ""),
+                    feedback_type,
+                )
                 try:
                     scylla_manager.insert_article_feedback(
                         week_year=week_year,
+                        feedback_id=feedback_id,
                         article_id=article_id,
-                        message_ts=message.get("ts", ""),
-                        channel=channel.get("id", ""),
-                        user_id=user.get("id", ""),
+                        message_ts=message_ts,
+                        channel=channel_id,
+                        user_id=user_id,
                         user_name=user.get("username", user.get("name", "")),
                         feedback_type=feedback_type,
+                        created_at=slack_ts_to_datetime(action.get("action_ts")),
                     )
                     logger.info(f"Stored {feedback_type} feedback for article {article_id} from user {user.get('id')}")
                 except Exception as e:
@@ -416,11 +682,20 @@ async def slack_interactions(request: Request):
                         comment_text = action_data.get("value", "")
 
             user = payload.get("user", {})
-            week_year = get_week_year()
+            week_year = get_week_year_from_message_ts(message_ts)
+            feedback_id = build_feedback_id(
+                "modal_comment",
+                week_year,
+                channel_id,
+                message_ts,
+                user.get("id", ""),
+                view.get("id", ""),
+            )
 
             try:
                 scylla_manager.insert_article_feedback(
                     week_year=week_year,
+                    feedback_id=feedback_id,
                     article_id=article_id,
                     message_ts=message_ts,
                     channel=channel_id,
@@ -440,7 +715,7 @@ async def slack_interactions(request: Request):
 
 async def open_comment_modal(trigger_id: str, article_id: str, source_id: str, published_date: str, message_ts: str, channel: str):
     """Open a Slack modal for entering a comment."""
-    bot_token = os.getenv("SLACK_BOT_TOKEN")
+    bot_token = config.settings.slack_bot_token or os.getenv("SLACK_BOT_TOKEN")
     if not bot_token:
         logger.error("SLACK_BOT_TOKEN not configured for opening modal")
         return
