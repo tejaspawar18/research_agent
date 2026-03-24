@@ -1,0 +1,159 @@
+# Healthcare News, Journals & Government Sources
+sources:
+  # Cochrane Library - Systematic Reviews
+  # Note: cochranelibrary.com is behind Cloudflare bot protection; RSS may need browser-like access
+  - source_id: cochrane_reviews
+    name: "Cochrane Library - Systematic Reviews"
+    url: "https://www.cochranelibrary.com/cdsr/reviews"
+    source_type: journal
+    quality_tier: high
+    crawl_method: rss
+    rate_limit: 5
+    enabled: true
+    rss_url: "https://www.cochranelibrary.com/cdsr/table-of-contents/rss.xml"
+
+  # Health Policy Watch - NCD Coverage (WordPress - verified working RSS)
+  - source_id: health_policy_watch
+    name: "Health Policy Watch - NCDs"
+    url: "https://healthpolicy-watch.news/category/noncommunicable-diseases/"
+    source_type: news
+    quality_tier: medium
+    crawl_method: rss
+    rate_limit: 5
+    enabled: true
+    rss_url: "https://healthpolicy-watch.news/category/noncommunicable-diseases/feed/"
+
+  # Reuters Healthcare - No RSS (discontinued in 2020)
+  - source_id: reuters_healthcare
+    name: "Reuters Healthcare & Pharmaceuticals"
+    url: "https://www.reuters.com/business/healthcare-pharmaceuticals/"
+    source_type: news
+    quality_tier: high
+    crawl_method: adaptive
+    rate_limit: 5
+    enabled: true
+
+  # STAT News - Multiple Categories (WordPress - all verified working RSS)
+  - source_id: stat_politics
+    name: "STAT News - Politics"
+    url: "https://www.statnews.com/category/politics/"
+    source_type: news
+    quality_tier: high
+    crawl_method: rss
+    rate_limit: 5
+    enabled: true
+    rss_url: "https://www.statnews.com/category/politics/feed/"
+
+  - source_id: stat_biotech
+    name: "STAT News - Biotech"
+    url: "https://www.statnews.com/category/biotech/"
+    source_type: news
+    quality_tier: high
+    crawl_method: rss
+    rate_limit: 5
+    enabled: true
+    rss_url: "https://www.statnews.com/category/biotech/feed/"
+
+  - source_id: stat_pharma
+    name: "STAT News - Pharma"
+    url: "https://www.statnews.com/category/pharma/"
+    source_type: news
+    quality_tier: high
+    crawl_method: rss
+    rate_limit: 5
+    enabled: true
+    rss_url: "https://www.statnews.com/category/pharma/feed/"
+
+  - source_id: stat_health_tech
+    name: "STAT News - Health Tech"
+    url: "https://www.statnews.com/category/health-tech/"
+    source_type: news
+    quality_tier: high
+    crawl_method: rss
+    rate_limit: 5
+    enabled: true
+    rss_url: "https://www.statnews.com/category/health-tech/feed/"
+
+  - source_id: stat_in_the_lab
+    name: "STAT News - In the Lab"
+    url: "https://www.statnews.com/category/in-the-lab/"
+    source_type: news
+    quality_tier: high
+    crawl_method: rss
+    rate_limit: 5
+    enabled: true
+    rss_url: "https://www.statnews.com/category/in-the-lab/feed/"
+
+  # Indian Journal of Community Medicine (LWW - Cloudflare-protected, RSS likely works in browser)
+  - source_id: ijcm
+    name: "Indian Journal of Community Medicine"
+    url: "https://journals.lww.com/ijcm/toc/publishahead"
+    source_type: journal
+    quality_tier: high
+    crawl_method: rss
+    rate_limit: 5
+    enabled: true
+    rss_url: "https://journals.lww.com/ijcm/_layouts/15/OAKS.Journals/feed.aspx?FeedType=CurrentIssue"
+
+  # Indian Journal of Public Health (LWW - Cloudflare-protected, RSS likely works in browser)
+  - source_id: ijph
+    name: "Indian Journal of Public Health"
+    url: "https://journals.lww.com/IJPH/pages/results.aspx?txtKeywords=Preventive+Healthcare"
+    source_type: journal
+    quality_tier: high
+    crawl_method: rss
+    rate_limit: 5
+    enabled: true
+    rss_url: "https://journals.lww.com/IJPH/_layouts/15/OAKS.Journals/feed.aspx?FeedType=CurrentIssue"
+
+  # PTI Health & Lifestyle - No RSS (Angular SPA, no feeds available)
+  - source_id: pti_health
+    name: "PTI - Health & Lifestyle"
+    url: "https://www.ptinews.com/health-lifestyle"
+    source_type: news
+    quality_tier: medium
+    crawl_method: adaptive
+    rate_limit: 5
+    enabled: true
+
+  # Express Healthcare (WordPress - verified working RSS)
+  - source_id: express_healthcare
+    name: "ExpressHealthcare"
+    url: "https://www.expresshealthcare.in"
+    source_type: news
+    quality_tier: medium
+    crawl_method: rss
+    rate_limit: 5
+    enabled: true
+    rss_url: "https://www.expresshealthcare.in/feed/"
+
+  # Ayushman Bharat Digital Mission - No RSS (React SPA, no feeds available)
+  - source_id: abdm_parliament
+    name: "Ayushman Bharat Digital Mission - Parliament Questions"
+    url: "https://abdm.gov.in/parliament-questions"
+    source_type: government
+    quality_tier: high
+    crawl_method: adaptive
+    rate_limit: 5
+    enabled: true
+
+  # e-Health Magazine (WordPress - verified working RSS)
+  - source_id: ehealth_magazine
+    name: "e-Health Magazine - News"
+    url: "https://ehealth.eletsonline.com/category/news/"
+    source_type: news
+    quality_tier: medium
+    crawl_method: rss
+    rate_limit: 5
+    enabled: true
+    rss_url: "https://ehealth.eletsonline.com/category/news/feed/"
+
+  # IBEF Healthcare Blog - No RSS (custom site, no feeds available)
+  - source_id: ibef_healthcare
+    name: "India Brand Equity Foundation - Healthcare"
+    url: "https://www.ibef.org/blogs/category/healthcare"
+    source_type: news
+    quality_tier: medium
+    crawl_method: adaptive
+    rate_limit: 5
+    enabled: true

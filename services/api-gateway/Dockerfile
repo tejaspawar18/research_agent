@@ -6,9 +6,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl && rm -rf 
 
 WORKDIR /app
 
+# Copy shared code
+COPY shared/ /app/shared/
+
+# Copy requirements and install dependencies
 COPY services/api-gateway/requirements.txt /app/
 RUN pip install --no-cache-dir -r requirements.txt
 
+# Copy service code
 COPY services/api-gateway/*.py /app/
 
 EXPOSE 8000

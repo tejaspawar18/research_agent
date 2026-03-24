@@ -6,8 +6,12 @@ import re
 from typing import Optional, List, Tuple
 from urllib.parse import urlparse
 from datetime import datetime, date
+import sys
 import aiohttp
 from bs4 import BeautifulSoup
+
+sys.path.insert(0, '/app')
+from shared.config import config
 
 logger = logging.getLogger(__name__)
 
@@ -227,7 +231,7 @@ class HTMLExtractor:
                 async with session.get(
                     url,
                     headers=BROWSER_HEADERS,
-                    timeout=aiohttp.ClientTimeout(total=30),
+                    timeout=aiohttp.ClientTimeout(total=config.pipeline.html_fetch_timeout),
                     allow_redirects=True,
                 ) as response:
                     if response.status != 200:
@@ -289,7 +293,7 @@ class HTMLExtractor:
                 async with session.get(
                     url,
                     headers=BROWSER_HEADERS,
-                    timeout=aiohttp.ClientTimeout(total=30),
+                    timeout=aiohttp.ClientTimeout(total=config.pipeline.html_fetch_timeout),
                     allow_redirects=True,
                 ) as response:
                     if response.status != 200:

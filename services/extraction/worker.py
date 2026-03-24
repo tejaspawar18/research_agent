@@ -42,9 +42,9 @@ scheduler = AsyncIOScheduler()
 
 # Configuration
 WORKER_ID = os.getenv("WORKER_ID", "1")
-BATCH_SIZE = int(os.getenv("BATCH_SIZE", "50"))
-PARALLEL_WORKERS = int(os.getenv("PARALLEL_WORKERS", "5"))
-CRON_SCHEDULE = os.getenv("CRON_SCHEDULE", "*/30 * * * *")  # Every 30 min
+BATCH_SIZE = int(os.getenv("BATCH_SIZE", str(config.pipeline.extraction_worker_batch_size)))
+PARALLEL_WORKERS = int(os.getenv("PARALLEL_WORKERS", str(config.pipeline.extraction_parallel_workers)))
+CRON_SCHEDULE = os.getenv("CRON_SCHEDULE", config.pipeline.extraction_worker_cron)
 RUN_MODE = os.getenv("RUN_MODE", "cron")  # cron, continuous, api
 
 
@@ -98,7 +98,7 @@ async def extract_single_article(article: Article) -> Article:
                 logger.debug(f"HTML extraction successful for {article.url}")
         
         # Update article
-        if full_text and len(full_text) > 100:
+        if full_text and len(full_text) > config.pipeline.min_fulltext_length:
             article.full_text = full_text
             article.status = ArticleStatus.EXTRACTED
             article.processed_at = datetime.utcnow()
@@ -142,7 +142,7 @@ async def get_pmc_id_from_pmid(pmid: str, api_key: Optional[str] = None) -> Opti
             params["api_key"] = api_key
         
         async with aiohttp.ClientSession() as session:
-            async with session.get(url, params=params, timeout=10) as response:
+            async with session.get(url, params=params, timeout=config.pipeline.pmid_lookup_timeout) as response:
                 if response.status == 200:
                     data = await response.json()
                     records = data.get("records", [])
@@ -240,7 +240,7 @@ async def run_continuous():
         await run_extraction_cycle()
         
         # Wait before next cycle
-        await asyncio.sleep(60)  # 1 minute between cycles
+        await asyncio.sleep(config.pipeline.extraction_continuous_interval)
 
 
 def setup_scheduler():

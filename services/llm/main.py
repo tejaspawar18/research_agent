@@ -159,17 +159,21 @@ class LLMProvider:
     """LLM provider interface."""
     
     def __init__(self):
-        self.provider = os.getenv("LLM_PROVIDER", "openai").lower()
-        self.api_key = os.getenv("LLM_API_KEY")
-        self.model = os.getenv("LLM_MODEL", "gpt-4o-mini")
-    
+        self.provider = config.settings.llm_provider.lower()
+        self.api_key = config.settings.llm_api_key
+        self.model = config.settings.llm_model
+
     async def complete(
         self,
         messages: List[Dict[str, str]],
-        max_tokens: int = 16000,
-        temperature: float = 0.3,
+        max_tokens: int = None,
+        temperature: float = None,
         call_type: str = "unknown",
     ) -> str:
+        if max_tokens is None:
+            max_tokens = config.pipeline.llm_max_tokens
+        if temperature is None:
+            temperature = config.pipeline.llm_temperature
         """Generate completion."""
         if self.provider == "anthropic":
             return await self._anthropic_complete(messages, max_tokens, temperature, call_type)
@@ -192,7 +196,7 @@ class LLMProvider:
                     "max_tokens": max_tokens,
                     "temperature": temperature,
                 },
-                timeout=90.0,
+                timeout=config.pipeline.llm_api_timeout,
             )
             response.raise_for_status()
             data = response.json()
@@ -225,7 +229,7 @@ class LLMProvider:
                     "system": system_msg,
                     "messages": user_msgs,
                 },
-                timeout=90.0,
+                timeout=config.pipeline.llm_api_timeout,
             )
             response.raise_for_status()
             data = response.json()
@@ -279,7 +283,7 @@ class LLMProvider:
                 url,
                 headers={"Content-Type": "application/json"},
                 json=payload,
-                timeout=90.0,
+                timeout=config.pipeline.llm_api_timeout,
             )
             response.raise_for_status()
             data = response.json()
@@ -437,65 +441,82 @@ class ArticleClassifier:
 
     CLASSIFY_PROMPT = """You are a medical research classifier specializing in preventive health.
 
+
 ## CLASSIFICATION TASK
 Determine if this article is relevant to preventive health research. If it is, classify it into ONE project area and ONE specific sub-topic. If it is NOT relevant, reject it.
 
+
 CRITICAL: Only classify articles that are genuinely about human health, disease prevention, nutrition, exercise, public health policy, or medical research. Articles about technology (computing, engineering, physics, materials science, etc.) that merely mention health as a speculative future application are NOT relevant. Be strict.
+
+
+## CROSS-CUTTING TAGS
+These tags may appear across any project area and indicate general relevance to preventive health:
+Diagnostic, testing, genetic, surgery, therapy, nutrition, obesity, clinical guidelines, lymphatic system, glymphatic system, Healthcare devices, Healthcare Companies, AI Healthcare
+
 
 ## PROJECT AREAS AND SUB-TOPICS
 
+
 **PROJECT 1: disease_prevention** - Preventing key diseases impacting physical, cognitive and emotional health
 Sub-topics:
-- "Preventing Atherosclerotic Heart Disease" - cardiovascular disease, atherosclerosis, cholesterol, lipids, statins, coronary artery disease
-- "Preventing Type 2 Diabetes and Insulin Resistance" - insulin, glucose, beta cell, GLP-1, metformin, HbA1c, prediabetes
-- "Preventing Other Key Metabolic Diseases" - hypertension, fatty liver, kidney disease, NAFLD, metabolic syndrome
-- "Preventing Cancers" - carcinogenesis, tumor, immunotherapy, oncology, cancer screening, cancer prevention
-- "Preventing Musculoskeletal Diseases" - osteoporosis, sarcopenia, bone density, joint health, orthopedic prevention
-- "Preventing Neurodegenerative Diseases" - dementia, Alzheimer's, Parkinson's, neuroinflammation, cognitive decline prevention
-- "Preventing Mental Health Conditions" - anxiety, depression, stress, mood disorders, psychological interventions
-- "Maintaining Foundational Health" - immune system, gut microbiome, oral health, skin health, vision, hearing
+- "Preventing Atherosclerotic Heart Disease" - cardiovascular disease, atherosclerosis, plaque, lipid, calcification, cholesterol, LDL, HDL, endothelial dysfunction, statin, PCSK9 inhibitor, lipoprotein, ApoB, ApoA, ApoE, Lp(a), triglyceride, coronary artery, cardiology
+- "Preventing Type 2 Diabetes and Insulin Resistance" - insulin, glucose, beta cell, GLP-1, metformin, hyperinsulinemia, prediabetes, HbA1c, c-peptide
+- "Preventing Other Key Metabolic Diseases" - blood pressure, hypertension, fatty liver, cirrhosis, fibrosis, albuminuria, creatinine, NAFLD, DKD, visceral fat, metabolic syndrome
+- "Preventing Cancers" - carcinogenesis, tumor, immunotherapy, leukocytes, genetic instability, genomic instability, t-cell, oncogenes, oncologist, cancer screening, cancer prevention
+- "Preventing Musculoskeletal Diseases" - muscles, joints, bones, sarcopenia, osteoporosis, bone mass, muscle mass, body mineral density, cartilage, tendon, ligament, myokines, type 1 muscle fibres, type 2 muscle fibres, osteoblast, osteoclast, gait mechanics, orthopedic, synovial fluid
+- "Preventing Neurodegenerative Diseases" - dementia, Alzheimer's, Parkinson's, Huntington's, brain, neurotransmitters, cortex, lobe, memory, motor, nervous system, neuroinflammation, Lewy bodies, cognitive decline prevention
+- "Preventing Mental Health Conditions" - anxiety, depression, mood, brain, endocrine, neurotransmitters, psychology, serotonin, dopamine, stress, mood disorders, psychological interventions
+- "Maintaining Foundational Health" - immune system, innate immunity, adaptive immunity, gut microbiome, microbiota, skin barrier, retina, teeth, tongue, oral microbiome, immunity, gut, oral, skin, eye, ear
+
 
 **PROJECT 2: behavioral_protocols** - Behavioural protocols for improving healthspan
 Sub-topics:
-- "Using Cardiovascular Exercises" - aerobic training, endurance exercise, cardiac fitness
-- "Using Resistance Training Exercises" - strength training, hypertrophy, resistance exercise
-- "Using Stability and Mobility Exercises" - balance, flexibility, yoga, mobility training
-- "Sleep" - circadian rhythm, sleep architecture, sleep quality, insomnia
-- "Meditation, Breathwork and Related Practices" - meditation, mindfulness, breathing exercises
-- "Emerging Behavioural Protocols" - cold exposure, heat therapy, cryotherapy, sauna, acupuncture
-- "Risky Behaviours" - smoking, alcohol, substance abuse, addiction, vaping
+- "Using Cardiovascular Exercises" - aerobic training, anaerobic exercise, heart rate, heart activity, endurance, cardiac output, steady-state aerobic training, threshold training, tempo training, interval training, mixed-modal cardio, CrossFit
+- "Using Resistance Training Exercises" - hypertrophy, muscle, strength, fast twitch, sport-specific conditioning, maximal strength training, 1-5 RM lifting, heavy compound barbell lifts, powerlifting-style training, 6-12 rep bodybuilding-style training, free-weight, muscular endurance, high-rep resistance training, light-load long-duration sets, resistance circuits, power training, explosive training, plyometrics, jump training, medicine-ball throws, eccentric training, slow eccentric loading, tempo-controlled training, calisthenics training, push-ups, pull-ups, dips, squats, core bodyweight work, gymnastics-style strength
+- "Using Stability and Mobility Exercises" - balance, flexibility, motor coordination, yoga, mobility training, joint mobility drills, dynamic stretching, active ROM work, controlled articular rotations, stability, motor control training, integrated mind-body movement, recovery training, static stretching, Tai Chi, upper body stability, lower body stability, core stability, ankle mobility
+- "Sleep" - circadian rhythm, REM, Non-REM, sleep architecture, chronotype, slow wave, sleep environment, zeitgebers, sleep quality, insomnia
+- "Meditation, Breathwork and Related Practices" - breathing, slow resonant breathing, breath-hold, hypoxic breathing, forceful breathing, hyperventilatory breathing, focused attention, breath-anchored meditation, open-monitoring, Yoga Nidra, Non-Sleep Deep Rest (NSDR), Buteyko-style breathing, walking breath-holds, intermittent hypoxic breathing, Wim Hof-style breathing, Bhastrika, Kapalbhati, Holotropic, journaling, diary writing, social connection, meditation, mindfulness
+- "Emerging Behavioural Protocols" - naturotherapy, heat exposure, cold exposure, infra-red exposure, cryotherapy, HBOT, hydrotherapy, sauna, acupuncture, skin conductance biofeedback, neurofeedback, cold immersion therapy, cold exposure therapy, intermittent hyperoxia-hypoxia training (IHHT), exercise with oxygen therapy, heart rate variability biofeedback (HRVB), contrast therapy
+- "Risky Behaviours" - tobacco, smoking, vaping, alcohol, drugs, digital addiction, opioids, nicotine, addiction, dopamine, sedatives, Z-drugs, benzodiazepines, opioid use, codeine, morphine, opium, heroin, fentanyl, methadone, stimulant use, cocaine, amphetamine, cannabinoid use, tetrahydrocannabinol, cannabidiol, psychedelic, dissociative use, gaming addiction
+
 
 **PROJECT 3: nutritional_protocols** - Nutritional protocols for improving healthspan
 Sub-topics:
-- "Protein" - amino acids, dietary protein, protein supplementation
-- "Sugar and Carbohydrates" - glycemic index, carbohydrate metabolism, sugar intake
-- "Fats and Oils" - dietary fat, omega fatty acids, saturated fat, trans fat
-- "Hydration and Salts" - electrolytes, hydration, mineral balance
-- "Comparison of Popular Diets and Dietary Techniques" - fasting, mediterranean diet, keto, vegan
-- "Micronutrients and Conventional Supplements" - vitamins, minerals, supplementation
-- "Emerging Supplements" - omega-3, magnesium, creatine, NAD, herbal supplements
+- "Protein" - amino acids, plant protein, animal protein, whey, histidine, isoleucine, leucine, lysine, methionine, phenylalanine, threonine, tryptophan, valine, dietary protein, protein supplementation
+- "Sugar and Carbohydrates" - glycemic index, simple carbs, complex carbs, fructose, sucrose, refined carbs, starch, fibre, galactose, monosaccharides, disaccharides, oligosaccharides, refined sugar, unrefined sugar, liquid sugar, liquid glucose, millets, jowar, ragi, carbohydrate metabolism, sugar intake
+- "Fats and Oils" - saturated fats, unsaturated fats, PUFA, MUFA, omega-6, trans fats, omega-3, olive oil, refined oil, unrefined oil, edible oil, vegetable oil, soybean oil, canola oil, sunflower oil, peanut oil, palm oil, coconut oil, butter, clarified butter, ghee, dietary fat
+- "Hydration and Salts" - electrolyte, water, sodium, osmosis, fluids, mineral absorption, dehydration, pH balance, alkaline water, black salt, table salt, Himalayan pink salt, sea salt, brine salt, potassium-enriched salt, iodine
+- "Comparison of Popular Diets and Dietary Techniques" - fasting, Mediterranean, MedDiet, low-carb, vegan, vegetarian, intermittent fasting, ketogenic, keto, DASH, low-fat, FODMAP, low-FODMAP, alternate fasting, diet
+- "Micronutrients and Conventional Supplements" - vitamin, mineral, gummies, iron, calcium, multivitamin, Vitamin D, Vitamin C, Vitamin B, B2, B3, B5, B6, B7, B9, B12, Vitamin A, Vitamin E, Vitamin K, potassium, phosphorus, copper, zinc, micronutrient
+- "Emerging Supplements" - omega-3, fibre, magnesium, creatine, NAD, ashwagandha, herbal, food fortification, NAD+ boosters, nicotinamide riboside, nicotinamide mononucleotide, probiotics, prebiotics, inulin, fructo-oligosaccharides, galacto-oligosaccharides, magnesium glycinate, magnesium citrate, magnesium threonate, creatine monohydrate, soluble fibre, beta-glucans, psyllium, insoluble fibre, fermentable fibres, supplement, supplementation
+
 
 **PROJECT 4: government_interventions** - Government interventions for preventive public health
 Sub-topics:
-- "Improving Nutritional Standards and Food Safety" - food labelling, food safety regulation
-- "Preventing Respiratory Infections by Tackling Air Pollution" - air quality, PM2.5, COPD prevention
-- "Preventing Gastrointestinal Infections by Tackling Water Pollution" - waterborne disease, water quality
-- "Reducing Exposure to Key Toxins" - microplastics, heavy metals, environmental toxins
-- "Driving Mass Behavioural Change Through Effective Public Health Communications" - health literacy, public health campaigns
-- "Increasing Funding of Preventive Approaches to Public Health" - health policy funding, public health investment
-- "Adapting Healthcare Professional Talent Base" - healthcare workforce, preventive care training
+- "Improving Nutritional Standards and Food Safety" - food labelling, food scoring, food adulteration, food safety, food quality, hyperpalatability, ultra-processed food, HFSS, food toxins, FSSAI, Codex Alimentarius, additives, preservatives, sweeteners, ADI, aflatoxins, HACCP
+- "Preventing Respiratory Infections by Tackling Air Pollution" - PM 2.5, PM 10, COPD, ambient air, emission, alveoli, hazardous air, particulate matter, acute respiratory infection, oxidative stress, HEPA filtration, Air Quality Index, National Air Quality Standards, household air pollution, air filtration
+- "Preventing Gastrointestinal Infections by Tackling Water Pollution" - waterborne, fecal, E. coli, diarrhea, water filtration, microbial pathogens, protozoa, fecal contamination, reverse osmosis, turbidity, wastewater epidemiology, WASH
+- "Reducing Exposure to Key Toxins" - microplastics, PFAs, phthalates, heavy metals, bioaccumulation, toxicology, VOC, PCB, asbestos, POPs, bisphenols, BPA, biomonitoring, ICP-MS, LC-MS, GC-MS, endocrine disrupting chemicals, bioremediation, mycoremediation
+- "Driving Mass Behavioural Change Through Effective Public Health Communications" - health literacy, health communication, behavioural change, nudge, campaigns, outreach, mobilisation, behaviour science, health psychology, health campaigns, health outreach, COM-B, misinformation, health marketing, health messaging, process theories, PAPM, cognitive bias
+- "Increasing Funding of Preventive Approaches to Public Health" - insurance, funding, investment, finance, budget, public health expenditure, OOPE, health savings account, universal health coverage, system health accounts, national health accounts, Beveridge model, Bismarck model, health policy funding
+- "Adapting Healthcare Professional Talent Base" - preventive care training, workforce training, curriculum, capacity building, family medicine, community medicine, preventive medicine, healthcare workforce
+
 
 **PROJECT 5: youth_health** - Preparing youth for improved future healthspan
 Sub-topics:
-- "School and College Health Programs" - school health interventions, adolescent health, student wellness
-- "Regional Youth Health Initiatives" - country-specific youth health programs
+- "School and College Health Programs" - school, students, college, adolescent health, mental health, obesity, child nutrition, development, health curriculum, school intervention, college intervention, student wellness, campus health, youth health governance, sex education, youth tobacco addiction, youth smoking addiction, youth vaping addiction, youth alcohol addiction, youth drugs addiction, youth digital addiction, youth opioids addiction, youth nicotine addiction
+- "Regional Youth Health Initiatives" - India, USA, UK, EU, Australia, Scandinavia, Japan, Singapore, China, Canada, South Korea, France, Germany, country-specific youth health programs
+
 
 ## ARTICLE TO CLASSIFY
+
 
 Title: {title}
 Abstract: {abstract}
 
+
 ## RESPONSE FORMAT (JSON only)
+
 
 If the article IS relevant to preventive health:
 {{
@@ -505,6 +526,7 @@ If the article IS relevant to preventive health:
     "confidence": <0.0-1.0>,
     "keywords": ["<matched health keywords from article>"]
 }}
+
 
 If the article is NOT relevant to preventive health (e.g. technology, engineering, physics, materials science, pure chemistry, computer science, astronomy, etc.):
 {{
@@ -531,12 +553,12 @@ If the article is NOT relevant to preventive health (e.g. technology, engineerin
         try:
             prompt = self.CLASSIFY_PROMPT.format(
                 title=article.title,
-                abstract=truncate_text(article.abstract or "", 2000),
+                abstract=truncate_text(article.abstract or "", config.pipeline.classify_abstract_truncate),
             )
 
             response = await self.llm.complete(
                 messages=[{"role": "user", "content": prompt}],
-                temperature=0.2,
+                temperature=config.pipeline.classify_temperature,
                 call_type="classification",
             )
 
@@ -592,11 +614,11 @@ If the article is NOT relevant to preventive health (e.g. technology, engineerin
 
         # Require at least 2 keyword matches to classify via keywords alone
         # Single keyword matches are too unreliable (e.g. "brain" or "water")
-        if best_score >= 5:
+        if best_score >= config.pipeline.keyword_high_confidence_score:
             confidence = 0.9
-        elif best_score >= 3:
+        elif best_score >= config.pipeline.keyword_medium_confidence_score:
             confidence = 0.7
-        elif best_score >= 2:
+        elif best_score >= config.pipeline.keyword_low_confidence_score:
             confidence = 0.5
         else:
             # Too few matches - not confident enough, will fall through to LLM
@@ -616,42 +638,43 @@ If the article is NOT relevant to preventive health (e.g. technology, engineerin
 class ArticleSummarizer:
     """Generate summaries for preventive health articles."""
     
-    SUMMARIZE_PROMPT = """You are a preventive health research summarizer. Your job is to read an article and produce a clear, informative summary that highlights what matters for disease prevention and healthspan.
+    SUMMARIZE_PROMPT = """
+    You are a preventive health research summarizer. Your job is to read an article and produce a clear, informative summary that highlights what matters for disease prevention and healthspan.
 
-## ARTICLE
+    ## ARTICLE
 
-Title: {title}
-Study Type: {study_type}
-Source Quality: {source_quality}
+    Title: {title}
+    Study Type: {study_type}
+    Source Quality: {source_quality}
 
-{content_section}
+    {content_section}
 
-## INSTRUCTIONS
+    ## INSTRUCTIONS
 
-Write a summary with 5-7 bullet points covering:
-- What the study investigated and why it matters for preventive health
-- Key results and effect sizes (if reported)
-- Practical preventive implications (what someone could do based on this)
-- Limitations or caveats
-- Quality of evidence
+    Write a summary with 5-7 bullet points covering:
+    - What the study investigated and why it matters for preventive health
+    - Key results and effect sizes (if reported)
+    - Practical preventive implications (what someone could do based on this)
+    - Limitations or caveats
+    - Quality of evidence
 
-Do NOT repeat the article title, journal name, DOI, or publication date in the summary. Focus on the actual scientific content and findings.
+    Do NOT repeat the article title, journal name, DOI, or publication date in the summary. Focus on the actual scientific content and findings.
 
-## RESPONSE FORMAT (JSON only)
+    ## RESPONSE FORMAT (JSON only)
 
-{{
-    "summary": "- Bullet point 1\\n- Bullet point 2\\n- Bullet point 3\\n- Bullet point 4\\n- Bullet point 5",
-    "key_findings": ["finding 1", "finding 2", "finding 3", "finding 4", "finding 5"],
-    "preventive_implications": "<what this means for prevention in 1-2 sentences>",
-    "quality_assessment": "<brief assessment of evidence quality>",
-    "relevance_score": <0-100 relevance to preventive health>
-}}
+    {{
+        "summary": "- Bullet point 1\\n- Bullet point 2\\n- Bullet point 3\\n- Bullet point 4\\n- Bullet point 5",
+        "key_findings": ["finding 1", "finding 2", "finding 3", "finding 4", "finding 5"],
+        "preventive_implications": "<what this means for prevention in 1-2 sentences>",
+        "quality_assessment": "<brief assessment of evidence quality>",
+        "relevance_score": <0-100 relevance to preventive health>
+    }}
 
-RULES:
-- "summary" must be a string with 5-7 bullet points separated by \\n, each starting with "- "
-- "key_findings" must be an array of 5-7 distinct findings
-- Each bullet point should be 1-2 sentences of substantive content, not metadata
-- "relevance_score" must be a number 0-100"""
+    RULES:
+    - "summary" must be a string with 5-7 bullet points separated by \\n, each starting with "- "
+    - "key_findings" must be an array of 5-7 distinct findings
+    - Each bullet point should be 1-2 sentences of substantive content, not metadata
+    - "relevance_score" must be a number 0-100"""
     
     def __init__(self, llm: LLMProvider):
         self.llm = llm
@@ -661,9 +684,9 @@ RULES:
         try:
             # Use full_text if available (better summaries), otherwise abstract
             if article.full_text and len(article.full_text) > 200:
-                content_section = f"Full Text:\n{truncate_text(article.full_text, 6000)}"
+                content_section = f"Full Text:\n{truncate_text(article.full_text, config.pipeline.summarize_fulltext_truncate)}"
             elif article.abstract and len(article.abstract) > 50:
-                content_section = f"Abstract:\n{truncate_text(article.abstract, 3000)}"
+                content_section = f"Abstract:\n{truncate_text(article.abstract, config.pipeline.summarize_abstract_truncate)}"
             else:
                 content_section = f"Abstract:\n{article.abstract or 'Not available'}"
 
@@ -809,7 +832,7 @@ async def process_batch(request: BatchRequest):
             continue
 
         # Rate limit delay between LLM calls (avoid 429 errors)
-        await asyncio.sleep(0.3)
+        await asyncio.sleep(config.pipeline.llm_rate_limit_delay)
 
         # 3. Summarize (if this fails, skip article - it will be retried next cycle)
         try:
@@ -825,7 +848,7 @@ async def process_batch(request: BatchRequest):
             continue
 
         # Filter out articles with very low relevance score from summarization
-        if summary_result.relevance_score < 30:
+        if summary_result.relevance_score < config.pipeline.min_relevance_score_llm:
             RELEVANCE_FILTER.labels(result="low_score").inc()
             low_score_count += 1
             logger.info(f"Filtered out low-relevance article (score={summary_result.relevance_score}): {article.title[:60]}")
@@ -844,7 +867,7 @@ async def process_batch(request: BatchRequest):
 
         # Rate limit delay between articles
         if i < len(request.articles) - 1:
-            await asyncio.sleep(0.3)
+            await asyncio.sleep(config.pipeline.llm_rate_limit_delay)
 
         processed_count += 1
 

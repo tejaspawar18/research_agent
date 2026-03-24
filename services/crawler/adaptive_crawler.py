@@ -10,6 +10,7 @@ import sys
 sys.path.insert(0, '/app')
 
 from shared.models import Article
+from shared.config import config
 from shared.utils.metrics import CRAWL_METHOD_USED
 from rss_crawler import RSSCrawler
 from html_crawler import HTMLCrawler
@@ -124,7 +125,7 @@ class AdaptiveCrawler:
                 headers = {
                     "User-Agent": "Mozilla/5.0 (compatible; PreventiveHealthBot/1.0)",
                 }
-                async with session.get(self.source.url, headers=headers, timeout=30) as response:
+                async with session.get(self.source.url, headers=headers, timeout=config.pipeline.html_fetch_timeout) as response:
                     if response.status != 200:
                         return []
 

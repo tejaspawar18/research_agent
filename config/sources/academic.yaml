@@ -1,20 +1,16 @@
 # Academic Institutions & Expert Sources
 # Note: crawl_method: adaptive will try RSS, HTML, and auto-detection in sequence
 sources:
-  # Harvard
+  # Harvard - Gazette RSS (hms.harvard.edu blocked by Incapsula WAF)
   - source_id: harvard_medicine
-    name: "Harvard Medicine Magazine"
-    url: "https://magazine.hms.harvard.edu/articles"
+    name: "Harvard Gazette - Health & Medicine"
+    url: "https://news.harvard.edu/gazette/topic/health-medicine/"
     source_type: academic
     quality_tier: medium
-    crawl_method: adaptive
+    crawl_method: rss
     rate_limit: 5
     enabled: true
-    css_selectors:
-      article_list: ".views-row"
-      title: "h2 a, h3 a"
-      link: "h2 a, h3 a"
-      date: ".date"
+    rss_url: "https://news.harvard.edu/gazette/feed/"
 
   - source_id: yale_medicine
     name: "Yale Medicine - Research"
@@ -26,7 +22,8 @@ sources:
     enabled: true
     rss_url: "https://www.yalemedicine.org/rss/news.xml"
 
-  # Yale Medicine
+  # Yale Medicine - Disabled: yalemedicine.org uses JS-rendered pages, no per-category
+  # RSS feeds available. The yale_medicine source above covers all news via RSS.
   - source_id: yale_medicine_research
     name: "Yale Medicine - Research"
     url: "https://www.yalemedicine.org/search/news?tagId=1"
@@ -34,7 +31,7 @@ sources:
     quality_tier: medium
     crawl_method: adaptive
     rate_limit: 5
-    enabled: true
+    enabled: false
 
   - source_id: yale_medicine_clinical
     name: "Yale Medicine - Clinical"
@@ -43,7 +40,7 @@ sources:
     quality_tier: medium
     crawl_method: adaptive
     rate_limit: 5
-    enabled: true
+    enabled: false
 
   - source_id: yale_medicine_cancer
     name: "Yale Medicine - Cancer Answers"
@@ -52,7 +49,7 @@ sources:
     quality_tier: medium
     crawl_method: adaptive
     rate_limit: 5
-    enabled: true
+    enabled: false
 
   - source_id: yale_medicine_conditions
     name: "Yale Medicine - Conditions"
@@ -61,7 +58,7 @@ sources:
     quality_tier: medium
     crawl_method: adaptive
     rate_limit: 5
-    enabled: true
+    enabled: false
 
   # MIT
   - source_id: mit_science

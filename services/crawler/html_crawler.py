@@ -13,6 +13,7 @@ sys.path.insert(0, '/app')
 
 from shared.models import Article, Author, SourceQuality, ArticleStatus
 from shared.utils import clean_text, parse_date_string, extract_doi, get_domain
+from shared.config import config
 from base import BaseCrawler
 from pdf_extractor import PDFExtractor
 
@@ -54,7 +55,7 @@ class HTMLCrawler(BaseCrawler):
                 async with session.get(
                     self.source.url,
                     headers=headers,
-                    timeout=30,
+                    timeout=config.pipeline.html_fetch_timeout,
                     allow_redirects=True
                 ) as response:
                     if response.status != 200:
@@ -119,7 +120,7 @@ class HTMLCrawler(BaseCrawler):
                 return None
             
             title = clean_text(title_elem.get_text())
-            if not title or len(title) < 10:
+            if not title or len(title) < config.pipeline.title_min_length:
                 return None
             
             # Extract link
@@ -183,7 +184,7 @@ class HTMLCrawler(BaseCrawler):
                 url=url,
                 title=title,
                 authors=authors,
-                abstract=abstract[:3000] if abstract else None,
+                abstract=abstract[:config.pipeline.html_abstract_max_length] if abstract else None,
                 published_date=pub_date.date() if pub_date else date.today(),
                 doi=doi,
                 pdf_url=pdf_url,

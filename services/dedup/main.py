@@ -68,7 +68,7 @@ class DedupBatchResponse(BaseModel):
     results: List[DeduplicationResult]
 
 
-TITLE_SIMILARITY_THRESHOLD = 0.85
+TITLE_SIMILARITY_THRESHOLD = config.pipeline.dedup_similarity_threshold
 
 
 async def check_duplicate(article: Article) -> DeduplicationResult:

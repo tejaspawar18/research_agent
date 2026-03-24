@@ -2,6 +2,7 @@
 API Gateway - Unified entry point for the pipeline.
 """
 import logging
+import sys
 from contextlib import asynccontextmanager
 from typing import Optional, Dict
 
@@ -9,14 +10,17 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 import httpx
 
+sys.path.insert(0, '/app')
+from shared.config import config
+
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-ORCHESTRATOR_URL = "http://orchestrator:8006"
-CRAWLER_URL = "http://crawler:8001"
-DEDUP_URL = "http://dedup:8002"
-LLM_URL = "http://llm:8004"
-NOTIFICATION_URL = "http://notification:8005"
+ORCHESTRATOR_URL = config.settings.orchestrator_url
+CRAWLER_URL = config.settings.crawler_url
+DEDUP_URL = config.settings.dedup_url
+LLM_URL = config.settings.llm_url
+NOTIFICATION_URL = config.settings.notification_url
 
 
 @asynccontextmanager
@@ -44,7 +48,7 @@ app.add_middleware(
 
 async def proxy(method: str, url: str, json_data: dict = None, params: dict = None):
     try:
-        async with httpx.AsyncClient(timeout=120.0) as client:
+        async with httpx.AsyncClient(timeout=config.pipeline.gateway_proxy_timeout) as client:
             response = await client.request(method, url, json=json_data, params=params)
             return response.json()
     except httpx.ConnectError:
@@ -92,7 +96,7 @@ async def health():
         ("notification", NOTIFICATION_URL),
     ]:
         try:
-            async with httpx.AsyncClient(timeout=5.0) as client:
+            async with httpx.AsyncClient(timeout=config.pipeline.health_check_timeout) as client:
                 response = await client.get(f"{url}/health")
                 services[name] = response.status_code == 200
         except:

@@ -12,11 +12,9 @@ from pydantic import BaseModel
 
 import sys
 sys.path.insert(0, '/app')
-
 from shared.models import Article, CrawlJob, SourceConfig, ArticleStatus
 from shared.utils import RedisManager, compute_url_hash, compute_hash
 from shared.config import config
-
 from rss_crawler import RSSCrawler
 from pubmed_crawler import PubMedCrawler
 from html_crawler import HTMLCrawler
@@ -86,10 +84,10 @@ CRAWLERS = {
 
 class CrawlerOrchestrator:
     """Orchestrates crawling across multiple sources."""
-    
+
     def __init__(self):
         self._jobs: Dict[str, CrawlJob] = {}
-    
+
     async def crawl_source(
         self,
         source: Any,
@@ -97,29 +95,29 @@ class CrawlerOrchestrator:
     ) -> List[Article]:
         """Crawl a single source."""
         crawler_class = CRAWLERS.get(source.crawl_method)
-        
+
         if not crawler_class:
             logger.warning(f"No crawler for method: {source.crawl_method}")
             return []
-        
+
         try:
             crawler = crawler_class(source)
             articles = await crawler.crawl(max_articles=max_articles)
-            
+
             # Add hashes for deduplication
             for article in articles:
                 article.url_hash = compute_url_hash(article.url)
                 if article.abstract:
                     article.content_hash = compute_hash(article.abstract)
                 article.title_hash = compute_hash(article.title) if article.title else None
-            
+
             logger.info(f"Crawled {len(articles)} articles from {source.name}")
             return articles
-            
+
         except Exception as e:
             logger.error(f"Error crawling {source.name}: {e}")
             return []
-    
+
     async def run_crawl_job(
         self,
         job: CrawlJob,
@@ -138,7 +136,7 @@ class CrawlerOrchestrator:
                 sources = [s for s in sources if s.source_id in source_ids]
             
             all_articles = []
-            
+
             # Crawl sources with rate limiting
             for source in sources:
                 # Check rate limit
@@ -146,13 +144,13 @@ class CrawlerOrchestrator:
                 allowed = await redis_manager.rate_limit_check(
                     rate_key, source.rate_limit, 60
                 )
-                
+
                 if not allowed:
                     logger.warning(f"Rate limited for {source.name}")
                     continue
-                
+
                 articles = await self.crawl_source(source, max_articles_per_source)
-                
+
                 # Check for duplicates using Redis cache
                 new_articles = []
                 for article in articles:
@@ -163,36 +161,35 @@ class CrawlerOrchestrator:
                             await redis_manager.mark_url_seen(
                                 article.url_hash, article.article_id
                             )
-                
+
                 all_articles.extend(new_articles)
                 job.articles_found += len(articles)
                 job.articles_new = len(new_articles)
-                
+
                 # Small delay between sources
                 await asyncio.sleep(1)
-            
             # Push articles to queue for next pipeline step
             for article in all_articles:
                 await redis_manager.push_queue(
                     "articles:crawled",
                     article.model_dump_json()
                 )
-            
+
             job.status = "completed"
             logger.info(
                 f"Crawl job {job.job_id} completed: "
                 f"{job.articles_found} found, {job.articles_new} new"
             )
-            
+
         except Exception as e:
             job.status = "failed"
             job.error_message = str(e)
             logger.error(f"Crawl job {job.job_id} failed: {e}")
-        
+
         finally:
             job.completed_at = datetime.utcnow()
             self._jobs[job.job_id] = job
-    
+
     def get_job(self, job_id: str) -> Optional[CrawlJob]:
         """Get job by ID."""
         return self._jobs.get(job_id)
@@ -207,19 +204,19 @@ async def trigger_crawl(request: CrawlRequest, background_tasks: BackgroundTasks
     sources = config.sources
     if request.source_ids:
         sources = [s for s in sources if s.source_id in request.source_ids]
-    
+
     job = CrawlJob(
         source_id="all" if not request.source_ids else ",".join(request.source_ids),
         source_name="Multiple sources",
     )
-    
+
     background_tasks.add_task(
         orchestrator.run_crawl_job,
         job,
         request.source_ids,
         request.max_articles_per_source,
     )
-    
+
     return CrawlResponse(
         job_id=job.job_id,
         status="started",
@@ -234,7 +231,6 @@ async def get_crawl_status(job_id: str):
     job = orchestrator.get_job(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
-    
     return CrawlJobStatus(
         job_id=job.job_id,
         status=job.status,
@@ -277,7 +273,7 @@ async def crawl_single_source(
     source = config.get_source(source_id)
     if not source:
         raise HTTPException(status_code=404, detail="Source not found")
-    
+
     articles = await orchestrator.crawl_source(source, max_articles)
 
     # Push to queue

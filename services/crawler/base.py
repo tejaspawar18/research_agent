@@ -9,6 +9,7 @@ import sys
 sys.path.insert(0, '/app')
 
 from shared.models import Article
+from shared.config import config
 
 logger = logging.getLogger(__name__)
 
@@ -43,7 +44,7 @@ class BaseCrawler(ABC):
         try:
             import aiohttp
             async with aiohttp.ClientSession() as session:
-                async with session.get(self.source.url, timeout=10) as response:
+                async with session.get(self.source.url, timeout=config.pipeline.health_check_timeout) as response:
                     return response.status == 200
         except Exception as e:
             logger.error(f"Health check failed for {self.source.name}: {e}")

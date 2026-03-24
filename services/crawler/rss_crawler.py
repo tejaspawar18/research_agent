@@ -11,7 +11,9 @@ import sys
 sys.path.insert(0, '/app')
 
 from shared.models import Article, Author, SourceQuality, ArticleStatus
+from urllib.parse import urljoin
 from shared.utils import clean_text, parse_date_string, extract_doi, get_domain
+from shared.config import config
 from base import BaseCrawler
 from pdf_extractor import PDFExtractor
 
@@ -35,7 +37,7 @@ class RSSCrawler(BaseCrawler):
 
         try:
             async with aiohttp.ClientSession() as session:
-                async with session.get(feed_url, timeout=30) as response:
+                async with session.get(feed_url, timeout=config.pipeline.rss_fetch_timeout) as response:
                     if response.status != 200:
                         logger.error(f"RSS feed returned {response.status}: {feed_url}")
                         return []
@@ -71,10 +73,20 @@ class RSSCrawler(BaseCrawler):
     async def _parse_entry(self, entry, extract_pdfs: bool = True) -> Optional[Article]:
         """Parse a single RSS entry."""
         try:
-            # Get URL
+            # Get URL - resolve relative links using source base URL
             url = entry.get('link', '')
+            # Prefer entry ID if link points to a download/redirect URL
+            if url and '/download.asp' in url:
+                entry_id = entry.get('id', '')
+                if entry_id and entry_id.startswith('http'):
+                    url = entry_id
             if not url:
                 return None
+            if url.startswith('/'):
+                from urllib.parse import urlparse
+                base = self.source.rss_url or self.source.url
+                parsed = urlparse(base)
+                url = f"{parsed.scheme}://{parsed.netloc}{url}"
             
             # Get title
             title = entry.get('title', '')
@@ -115,6 +127,23 @@ class RSSCrawler(BaseCrawler):
                         pub_date = parse_date_string(entry[date_field])
                         if pub_date:
                             break
+
+            # Fallback: extract date from description HTML (e.g. ScienceDirect)
+            # Patterns: "Publication date: Month Year", "Publication date: Day Month Year",
+            #           "Publication date: Available online Day Month Year"
+            if not pub_date:
+                import re
+                raw_summary = entry.get('summary', '') or entry.get('description', '')
+                date_match = re.search(
+                    r'Publication date:\s*(?:Available online\s+)?(\d{1,2}\s+)?(\w+\s+\d{4})',
+                    raw_summary
+                )
+                if date_match:
+                    pub_date = parse_date_string(date_match.group(0).replace('Publication date:', '').replace('Available online', '').strip())
+
+            # Cap future dates regardless of source
+            if pub_date and pub_date.date() > date.today():
+                pub_date = datetime.now().replace(hour=0, minute=0, second=0, microsecond=0)
             
             # Get authors
             authors = []
@@ -151,7 +180,7 @@ class RSSCrawler(BaseCrawler):
                 url=url,
                 title=title,
                 authors=authors,
-                abstract=abstract[:5000] if abstract else None,  # Limit abstract length
+                abstract=abstract[:config.pipeline.abstract_max_length] if abstract else None,
                 published_date=pub_date.date() if pub_date else date.today(),
                 doi=doi,
                 pdf_url=pdf_url,

@@ -41,8 +41,8 @@ redis_manager = RedisManager()
 scheduler = AsyncIOScheduler()
 
 # Configuration
-CRON_SCHEDULE = os.getenv("CRON_SCHEDULE", "0 */2 * * *")  # Every 2 hours
-MAX_ARTICLES_PER_SOURCE = int(os.getenv("MAX_ARTICLES_PER_SOURCE", "100"))
+CRON_SCHEDULE = os.getenv("CRON_SCHEDULE", config.pipeline.cron_schedule)
+MAX_ARTICLES_PER_SOURCE = int(os.getenv("MAX_ARTICLES_PER_SOURCE", str(config.pipeline.default_max_articles_per_source)))
 RUN_MODE = os.getenv("RUN_MODE", "cron")  # cron, api
 
 
@@ -212,7 +212,7 @@ async def run_crawl_cycle(source_ids: Optional[List[str]] = None):
             # Check rate limit
             rate_key = f"crawl_rate:{source.source_id}"
             allowed = await redis_manager.rate_limit_check(
-                rate_key, source.rate_limit, 60
+                rate_key, source.rate_limit, config.pipeline.crawler_rate_limit_window
             )
             
             if not allowed:
@@ -229,7 +229,7 @@ async def run_crawl_cycle(source_ids: Optional[List[str]] = None):
             stats.total_duplicates += source_stats["duplicates"]
             
             # Small delay between sources
-            await asyncio.sleep(2)
+            await asyncio.sleep(config.pipeline.crawler_source_delay)
         
         logger.info("=" * 60)
         logger.info(

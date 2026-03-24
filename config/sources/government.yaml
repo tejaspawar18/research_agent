@@ -9,7 +9,7 @@ sources:
     crawl_method: rss
     rate_limit: 5
     enabled: true
-    rss_url: "https://www.nih.gov/news-events/news-releases/feed"
+    rss_url: "https://www.nih.gov/news-releases/feed.xml"
 
   # CDC
   - source_id: cdc_media
@@ -20,18 +20,58 @@ sources:
     crawl_method: rss
     rate_limit: 5
     enabled: true
-    rss_url: "https://tools.cdc.gov/podcasts/feed.asp?feedid=183"
+    rss_url: "https://tools.cdc.gov/api/v2/resources/media/132608.rss"
 
-  # ECDC
-  - source_id: ecdc
-    name: "European Centre for Disease Prevention and Control"
-    url: "https://www.ecdc.europa.eu/en/search?s=&f%5B0%5D=categories%3A1307"
+  # ECDC - Topic-wise feeds (old monolithic rss.xml no longer exists)
+  - source_id: ecdc_publications
+    name: "ECDC - Publications"
+    url: "https://www.ecdc.europa.eu/en/publications-data"
     source_type: government
     quality_tier: high
     crawl_method: rss
     rate_limit: 5
     enabled: true
-    rss_url: "https://www.ecdc.europa.eu/en/rss.xml"
+    rss_url: "https://www.ecdc.europa.eu/en/taxonomy/term/1244/feed"
+
+  - source_id: ecdc_epidemiological_updates
+    name: "ECDC - Epidemiological Updates"
+    url: "https://www.ecdc.europa.eu/en/epidemiological-updates"
+    source_type: government
+    quality_tier: high
+    crawl_method: rss
+    rate_limit: 5
+    enabled: true
+    rss_url: "https://www.ecdc.europa.eu/en/taxonomy/term/1310/feed"
+
+  - source_id: ecdc_risk_assessments
+    name: "ECDC - Risk Assessments"
+    url: "https://www.ecdc.europa.eu/en/threats-and-outbreaks"
+    source_type: government
+    quality_tier: high
+    crawl_method: rss
+    rate_limit: 5
+    enabled: true
+    rss_url: "https://www.ecdc.europa.eu/en/taxonomy/term/1295/feed"
+
+  - source_id: ecdc_surveillance
+    name: "ECDC - Surveillance Reports"
+    url: "https://www.ecdc.europa.eu/en/surveillance-reports"
+    source_type: government
+    quality_tier: high
+    crawl_method: rss
+    rate_limit: 5
+    enabled: true
+    rss_url: "https://www.ecdc.europa.eu/en/taxonomy/term/1253/feed"
+
+  - source_id: ecdc_guidance
+    name: "ECDC - Guidance"
+    url: "https://www.ecdc.europa.eu/en/guidance"
+    source_type: government
+    quality_tier: high
+    crawl_method: rss
+    rate_limit: 5
+    enabled: true
+    rss_url: "https://www.ecdc.europa.eu/en/taxonomy/term/1301/feed"
 
   # PIB India - Disabled: posts images of official notices, not extractable text
   - source_id: pib_india
@@ -44,17 +84,13 @@ sources:
     enabled: false
     rss_url: "https://pib.gov.in/RssMain.aspx?ModId=6&Lang=1&Regid=3"
 
-  # American Heart Association
-  - source_id: aha_news
-    name: "American Heart Association"
-    url: "https://www.heart.org/en/around-the-aha"
+  # American Heart Association - Research (heart.org returns 403, using AHA Journals RSS)
+  - source_id: aha_circulation
+    name: "AHA - Circulation Research"
+    url: "https://www.ahajournals.org/journal/circ"
     source_type: organization
-    quality_tier: medium
-    crawl_method: html_scrape
+    quality_tier: high
+    crawl_method: rss
     rate_limit: 5
     enabled: true
-    css_selectors:
-      article_list: ".news-card"
-      title: ".card-title"
-      link: "a"
-      date: ".date"
+    rss_url: "https://www.ahajournals.org/action/showFeed?type=etoc&feed=rss&jc=circ"

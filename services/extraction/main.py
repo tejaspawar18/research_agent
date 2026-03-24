@@ -14,6 +14,7 @@ from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, HttpUrl
 
 from shared.utils.metrics import add_metrics_endpoint, EXTRACTION_METHOD
+from shared.config import config
 from pmc_extractor import PMCExtractor
 from pdf_extractor import PDFExtractor
 from html_extractor import HTMLExtractor
@@ -75,7 +76,7 @@ async def _resolve_doi_url(doi: str) -> Optional[str]:
         async with aiohttp.ClientSession() as session:
             async with session.head(
                 doi_url,
-                timeout=aiohttp.ClientTimeout(total=15),
+                timeout=aiohttp.ClientTimeout(total=config.pipeline.doi_resolve_timeout),
                 allow_redirects=True,
                 headers={"User-Agent": "PreventiveHealthPipeline/1.0"},
             ) as response:
@@ -91,7 +92,7 @@ async def _resolve_doi_url(doi: str) -> Optional[str]:
         async with aiohttp.ClientSession() as session:
             async with session.get(
                 doi_url,
-                timeout=aiohttp.ClientTimeout(total=15),
+                timeout=aiohttp.ClientTimeout(total=config.pipeline.doi_resolve_timeout),
                 allow_redirects=True,
                 headers={"User-Agent": "PreventiveHealthPipeline/1.0"},
             ) as response:
@@ -118,7 +119,7 @@ async def _unpaywall_lookup(doi: str) -> Optional[str]:
 
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.get(api_url, timeout=aiohttp.ClientTimeout(total=15)) as response:
+            async with session.get(api_url, timeout=aiohttp.ClientTimeout(total=config.pipeline.unpaywall_timeout)) as response:
                 if response.status != 200:
                     logger.debug(f"Unpaywall lookup failed: {response.status} for DOI {doi}")
                     return None

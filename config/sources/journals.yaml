@@ -40,7 +40,7 @@ sources:
     crawl_method: rss
     rate_limit: 5
     enabled: true
-    rss_url: "https://www.cell.com/neuron/rss"
+    rss_url: "https://www.cell.com/neuron/current.rss"
 
   # Lancet Journals
   - source_id: lancet_diabetes
@@ -84,6 +84,7 @@ sources:
     rss_url: "https://www.thelancet.com/rssfeed/lanrhe_current.xml"
 
   # BMJ
+  # Disabled: BMJ consolidated section feeds into recent.xml (same as bmj_research)
   - source_id: bmj_clinical_review
     name: "BMJ Clinical Review"
     url: "https://www.bmj.com/education/clinical-review"
@@ -91,8 +92,8 @@ sources:
     quality_tier: high
     crawl_method: rss
     rate_limit: 5
-    enabled: true
-    rss_url: "https://www.bmj.com/rss/clinic.xml"
+    enabled: false
+    rss_url: "https://www.bmj.com/rss/recent.xml"
 
   - source_id: bmj_research
     name: "BMJ Research"
@@ -104,6 +105,7 @@ sources:
     enabled: true
     rss_url: "https://www.bmj.com/rss/recent.xml"
 
+  # Disabled: BMJ consolidated section feeds into recent.xml (same as bmj_research)
   - source_id: bmj_practice
     name: "BMJ Practice"
     url: "https://www.bmj.com/education/practice"
@@ -111,7 +113,8 @@ sources:
     quality_tier: high
     crawl_method: rss
     rate_limit: 5
-    enabled: true
+    enabled: false
+    rss_url: "https://www.bmj.com/rss/recent.xml"
 
   # European Journal of Medical Research
   - source_id: eur_j_med_res
@@ -135,20 +138,20 @@ sources:
     enabled: true
     rss_url: "https://www.ahajournals.org/action/showFeed?type=etoc&feed=rss&jc=jaha"
 
-  # IHME
+  # IHME - Using newsroom page (research library returns 403)
   - source_id: ihme
     name: "Institute for Health Metrics and Evaluation"
-    url: "https://www.healthdata.org/search?f%5B0%5D=content_type%3Ascientific_publication"
+    url: "https://www.healthdata.org/news-events/newsroom"
     source_type: journal
     quality_tier: high
     crawl_method: html_scrape
     rate_limit: 5
     enabled: true
     css_selectors:
-      article_list: ".view-content .views-row"
-      title: "h3 a"
-      link: "h3 a"
-      date: ".date-display-single"
+      article_list: ".c-card"
+      title: ".c-card__title"
+      link: "a"
+      date: ".c-card__eyebrow"
 
   # Obesity & Energetics
   - source_id: obesity_energetics
@@ -159,3 +162,69 @@ sources:
     crawl_method: html_scrape
     rate_limit: 5
     enabled: true
+    css_selectors:
+      article_list: ".node"
+      title: "h2 a, h3 a"
+      link: "h2 a, h3 a"
+      date: "h2 a, h3 a"
+
+  # ScienceDirect / Elsevier Journals
+  - source_id: sciencedirect_public_health
+    name: "ScienceDirect - Public Health"
+    url: "https://www.sciencedirect.com/journal/public-health"
+    source_type: journal
+    quality_tier: high
+    crawl_method: rss
+    rate_limit: 5
+    enabled: true
+    rss_url: "https://rss.sciencedirect.com/publication/science/00333506"
+
+  - source_id: sciencedirect_preventive_medicine
+    name: "ScienceDirect - Preventive Medicine"
+    url: "https://www.sciencedirect.com/journal/preventive-medicine"
+    source_type: journal
+    quality_tier: high
+    crawl_method: rss
+    rate_limit: 5
+    enabled: true
+    rss_url: "https://rss.sciencedirect.com/publication/science/00917435"
+
+  - source_id: sciencedirect_metabolism
+    name: "ScienceDirect - Metabolism"
+    url: "https://www.sciencedirect.com/journal/metabolism"
+    source_type: journal
+    quality_tier: high
+    crawl_method: rss
+    rate_limit: 5
+    enabled: true
+    rss_url: "https://rss.sciencedirect.com/publication/science/00260495"
+
+  - source_id: sciencedirect_atherosclerosis
+    name: "ScienceDirect - Atherosclerosis"
+    url: "https://www.sciencedirect.com/journal/atherosclerosis"
+    source_type: journal
+    quality_tier: high
+    crawl_method: rss
+    rate_limit: 5
+    enabled: true
+    rss_url: "https://rss.sciencedirect.com/publication/science/00219150"
+
+  - source_id: sciencedirect_clinical_nutrition
+    name: "ScienceDirect - Clinical Nutrition"
+    url: "https://www.sciencedirect.com/journal/clinical-nutrition"
+    source_type: journal
+    quality_tier: high
+    crawl_method: rss
+    rate_limit: 5
+    enabled: true
+    rss_url: "https://rss.sciencedirect.com/publication/science/02615614"
+
+  - source_id: elsevier_lancet_global
+    name: "Elsevier - Lancet Global Health"
+    url: "https://www.thelancet.com/journals/langlo/home"
+    source_type: journal
+    quality_tier: high
+    crawl_method: rss
+    rate_limit: 5
+    enabled: true
+    rss_url: "https://rss.sciencedirect.com/publication/science/2214109X"

@@ -4,8 +4,12 @@ PubMed Central full text extractor.
 import logging
 import re
 from typing import Optional
+import sys
 import aiohttp
 import xml.etree.ElementTree as ET
+
+sys.path.insert(0, '/app')
+from shared.config import config
 
 logger = logging.getLogger(__name__)
 
@@ -46,7 +50,7 @@ class PMCExtractor:
                 async with session.get(
                     PMCExtractor.PMC_FETCH_URL,
                     params=params,
-                    timeout=30
+                    timeout=config.pipeline.pmc_fetch_timeout
                 ) as response:
                     if response.status != 200:
                         logger.warning(f"PMC fetch failed: {response.status} for {pmc_id}")

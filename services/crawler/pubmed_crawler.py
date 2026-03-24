@@ -14,6 +14,7 @@ sys.path.insert(0, '/app')
 
 from shared.models import Article, Author, SourceQuality, ArticleStatus
 from shared.utils import clean_text, parse_date_string, extract_pmid
+from shared.config import config
 from base import BaseCrawler
 from pdf_extractor import PDFExtractor
 
@@ -54,27 +55,27 @@ class PubMedCrawler(BaseCrawler):
             # Strategy 1: Last 30 days with open access filter
             pmids = await self._search_with_strategy(
                 base_query,
-                days=30,
+                days=config.pipeline.pubmed_initial_lookback_days,
                 open_access=True,
                 max_results=max_articles
             )
 
-            # Strategy 2: If few results, try last 90 days with open access
+            # Strategy 2: If few results, try extended lookback with open access
             if len(pmids) < max_articles // 2:
-                logger.info(f"Only {len(pmids)} results found, expanding to 90 days")
+                logger.info(f"Only {len(pmids)} results found, expanding to {config.pipeline.pubmed_extended_lookback_days} days")
                 pmids = await self._search_with_strategy(
                     base_query,
-                    days=90,
+                    days=config.pipeline.pubmed_extended_lookback_days,
                     open_access=True,
                     max_results=max_articles
                 )
 
-            # Strategy 3: If still few results, try last 30 days without OA filter
+            # Strategy 3: If still few results, try initial lookback without OA filter
             if len(pmids) < max_articles // 2:
                 logger.info(f"Only {len(pmids)} results found, removing OA filter")
                 pmids = await self._search_with_strategy(
                     base_query,
-                    days=30,
+                    days=config.pipeline.pubmed_initial_lookback_days,
                     open_access=False,
                     max_results=max_articles
                 )
@@ -147,7 +148,7 @@ class PubMedCrawler(BaseCrawler):
         url = f"{self.BASE_URL}/esearch.fcgi?{urlencode(params)}"
         
         async with aiohttp.ClientSession() as session:
-            async with session.get(url, timeout=30) as response:
+            async with session.get(url, timeout=config.pipeline.pubmed_search_timeout) as response:
                 if response.status != 200:
                     logger.error(f"PubMed search failed: {response.status}")
                     return []
@@ -177,7 +178,7 @@ class PubMedCrawler(BaseCrawler):
         articles = []
 
         async with aiohttp.ClientSession() as session:
-            async with session.get(url, timeout=60) as response:
+            async with session.get(url, timeout=config.pipeline.pubmed_fetch_timeout) as response:
                 if response.status != 200:
                     logger.error(f"PubMed fetch failed: {response.status}")
                     return []
@@ -341,13 +342,13 @@ class PubMedCrawler(BaseCrawler):
                 url=url,
                 title=title,
                 authors=authors,
-                abstract=abstract[:5000] if abstract else None,
+                abstract=abstract[:config.pipeline.abstract_max_length] if abstract else None,
                 published_date=pub_date.date() if pub_date else date.today(),
                 doi=doi,
                 pmid=pmid,
                 pdf_url=pdf_url,
                 has_pdf=has_pdf,
-                keywords=keywords[:20],  # Limit keywords
+                keywords=keywords[:config.pipeline.keyword_max_count],
                 source_quality=SourceQuality.HIGH,  # PubMed is high quality
                 status=ArticleStatus.CRAWLED,
                 crawled_at=datetime.utcnow(),

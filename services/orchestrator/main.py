@@ -38,11 +38,11 @@ kafka_manager = KafkaManager()
 s3_manager = S3Manager()
 scheduler = AsyncIOScheduler()
 
-CRAWLER_URL = os.getenv("CRAWLER_URL", "http://crawler:8001")
-DEDUP_URL = os.getenv("DEDUP_URL", "http://dedup:8002")
-EXTRACTION_URL = os.getenv("EXTRACTION_URL", "http://extraction:8003")
-LLM_URL = os.getenv("LLM_URL", "http://llm:8004")
-NOTIFICATION_URL = os.getenv("NOTIFICATION_URL", "http://notification:8005")
+CRAWLER_URL = config.settings.crawler_url
+DEDUP_URL = config.settings.dedup_url
+EXTRACTION_URL = config.settings.extraction_url
+LLM_URL = config.settings.llm_url
+NOTIFICATION_URL = config.settings.notification_url
 
 
 @asynccontextmanager
@@ -166,7 +166,8 @@ class PipelineOrchestrator:
             logger.info(f"Status breakdown: {len(needs_extraction)} need extraction, {len(already_extracted)} already extracted, {len(already_processed)} already processed")
 
             extracted_articles = already_extracted
-            if not skip_extraction and needs_extraction:
+            # Run extraction if: not skipped OR there are incomplete articles that need it
+            if needs_extraction and (not skip_extraction or incomplete_needs_extraction):
                 run.status = "extracting"
                 newly_extracted = await self._extract_fulltext(needs_extraction)
                 full_text_count = 0
@@ -176,7 +177,7 @@ class PipelineOrchestrator:
                         extracted_articles.append(a)
                         full_text_count += 1
                         CONTENT_TYPE_COUNTER.labels(content_type="full_text").inc()
-                    elif a.abstract and len(a.abstract) >= 100:
+                    elif a.abstract and len(a.abstract) >= config.pipeline.min_abstract_length:
                         a.status = ArticleStatus.EXTRACTED
                         extracted_articles.append(a)
                         abstract_fallback_count += 1
@@ -190,15 +191,17 @@ class PipelineOrchestrator:
                             )
                         except Exception as db_err:
                             logger.warning(f"Failed to update abstract-fallback status for {a.article_id}: {db_err}")
+                dropped_count = len(newly_extracted) - full_text_count - abstract_fallback_count
                 PIPELINE_STAGE_ARTICLES.labels(stage="extracted").set(len(extracted_articles))
-                logger.info(f"Extracted: {full_text_count} full text, {abstract_fallback_count} abstract-only")
+                logger.info(f"Extracted: {full_text_count} full text, {abstract_fallback_count} abstract-only, {dropped_count} dropped (no content)")
 
                 await kafka_manager.publish_articles(
                     "extracted", [a.model_dump() for a in extracted_articles], run.run_id
                 )
 
             processed_articles = list(already_processed)
-            if not skip_llm:
+            # Run LLM if: not skipped OR there are extracted articles from incomplete pipeline
+            if extracted_articles and (not skip_llm or (incomplete_needs_extraction or incomplete_extracted)):
                 run.status = "processing"
                 newly_processed = await self._llm_process(extracted_articles)
                 processed_articles.extend(newly_processed)
@@ -206,6 +209,8 @@ class PipelineOrchestrator:
                 run.articles_summarized = len([a for a in processed_articles if a.summary])
                 PIPELINE_STAGE_ARTICLES.labels(stage="processed").set(run.articles_filtered)
                 logger.info(f"Processed {len(newly_processed)} articles (+ {len(already_processed)} already processed)")
+            elif not skip_llm:
+                pass  # No extracted articles to process
             else:
                 processed_articles.extend(extracted_articles)
 
@@ -281,10 +286,10 @@ class PipelineOrchestrator:
     
     async def _crawl(self, source_ids: Optional[List[str]]) -> List[Article]:
         try:
-            async with httpx.AsyncClient(timeout=600.0) as client:
+            async with httpx.AsyncClient(timeout=config.pipeline.crawler_timeout) as client:
                 response = await client.post(
                     f"{CRAWLER_URL}/crawl/trigger",
-                    json={"source_ids": source_ids, "max_articles_per_source": 50}
+                    json={"source_ids": source_ids, "max_articles_per_source": config.pipeline.max_articles_per_source_crawl}
                 )
                 response.raise_for_status()
                 trigger_result = response.json()
@@ -292,8 +297,8 @@ class PipelineOrchestrator:
                 if trigger_result.get("status") == "busy":
                     logger.warning("Crawler is busy, waiting...")
 
-                for _ in range(120):
-                    await asyncio.sleep(5)
+                for _ in range(config.pipeline.crawler_poll_max_retries):
+                    await asyncio.sleep(config.pipeline.crawler_poll_interval)
                     status_resp = await client.get(f"{CRAWLER_URL}/crawl/status")
                     status = status_resp.json()
                     if not status.get("is_running", False):
@@ -339,7 +344,7 @@ class PipelineOrchestrator:
             return []
 
         try:
-            async with httpx.AsyncClient(timeout=120.0) as client:
+            async with httpx.AsyncClient(timeout=config.pipeline.dedup_timeout) as client:
                 response = await client.post(
                     f"{DEDUP_URL}/dedup/batch",
                     json={"articles": [a.model_dump(mode='json') for a in articles]}
@@ -404,7 +409,7 @@ class PipelineOrchestrator:
                     response = requests.post(
                         f"{EXTRACTION_URL}/extract",
                         json=extraction_data,
-                        timeout=30.0
+                        timeout=config.pipeline.extraction_timeout
                     )
 
                     if response.status_code == 200:
@@ -417,7 +422,11 @@ class PipelineOrchestrator:
                             extracted_date = result.get("published_date")
                             if extracted_date:
                                 try:
-                                    article.published_date = date.fromisoformat(extracted_date)
+                                    parsed_date = date.fromisoformat(extracted_date)
+                                    # Cap future dates to today
+                                    if parsed_date > date.today():
+                                        parsed_date = date.today()
+                                    article.published_date = parsed_date
                                 except (ValueError, TypeError):
                                     pass
 
@@ -447,7 +456,7 @@ class PipelineOrchestrator:
                             except Exception as redis_err:
                                 logger.warning(f"Redis set failed for extracted:{article.article_id}: {redis_err}")
                         else:
-                            logger.debug(f"Extraction failed for {article.url}: {result.get('error', 'Unknown error')}")
+                            logger.info(f"Extraction returned no full text for {article.url}: {result.get('error', 'no content')}")
 
                 except Exception as e:
                     logger.warning(f"Failed to extract full text for {article.url}: {e}")
@@ -462,7 +471,7 @@ class PipelineOrchestrator:
     
     async def _llm_process(self, articles: List[Article]) -> List[Article]:
         processed = []
-        BATCH_SIZE = 10
+        BATCH_SIZE = config.pipeline.llm_batch_size
 
         try:
             # Redis guard: filter out articles already LLM-processed
@@ -483,7 +492,7 @@ class PipelineOrchestrator:
                 logger.info("All articles already LLM-processed (Redis guard). Skipping LLM.")
                 return processed
 
-            async with httpx.AsyncClient(timeout=300.0) as client:
+            async with httpx.AsyncClient(timeout=config.pipeline.llm_timeout) as client:
                 for i in range(0, len(unprocessed), BATCH_SIZE):
                     batch = unprocessed[i:i + BATCH_SIZE]
                     logger.info(f"LLM processing batch {i // BATCH_SIZE + 1}/{(len(unprocessed) + BATCH_SIZE - 1) // BATCH_SIZE} ({len(batch)} articles)")
@@ -505,7 +514,7 @@ class PipelineOrchestrator:
                                 evidence_level = proc_result.get("evidence_level")
                                 # Cap evidence at 3 for abstract-only articles
                                 if not article.full_text and evidence_level:
-                                    evidence_level = min(evidence_level, 3)
+                                    evidence_level = min(evidence_level, config.pipeline.abstract_only_evidence_cap)
                                 article.evidence_level = evidence_level
                                 article.study_type = proc_result.get("study_type")
                                 article.relevance_score = proc_result.get("relevance_score")
@@ -532,6 +541,12 @@ class PipelineOrchestrator:
                                     await redis_manager.set(f"processed:{article.article_id}", "1")
                                 except Exception as redis_err:
                                     logger.warning(f"Redis set failed for processed:{article.article_id}: {redis_err}")
+                            else:
+                                reasons = proc_result.get("reasons", [])
+                                logger.info(
+                                    f"LLM rejected: {article.title[:60]} — "
+                                    f"status={proc_result.get('status')}, reasons={reasons}"
+                                )
 
                     except Exception as batch_err:
                         logger.warning(f"LLM batch {i // BATCH_SIZE + 1} failed: {batch_err}")
@@ -549,23 +564,40 @@ class PipelineOrchestrator:
         Limits: max 40 articles per run, only sends between 9:30 AM - 6:30 PM IST.
         """
         now_ist = datetime.now(IST)
-        notify_start = now_ist.replace(hour=9, minute=30, second=0, microsecond=0)
-        notify_end = now_ist.replace(hour=18, minute=30, second=0, microsecond=0)
+        notify_start = now_ist.replace(hour=config.pipeline.notify_start_hour, minute=config.pipeline.notify_start_minute, second=0, microsecond=0)
+        notify_end = now_ist.replace(hour=config.pipeline.notify_end_hour, minute=config.pipeline.notify_end_minute, second=0, microsecond=0)
         if now_ist < notify_start or now_ist > notify_end:
-            logger.info(f"Outside notification window (9:30 AM - 6:30 PM IST). Current IST time: {now_ist.strftime('%H:%M')}. Skipping notifications.")
+            logger.info(f"Outside notification window ({config.pipeline.notify_start_hour}:{config.pipeline.notify_start_minute:02d} - {config.pipeline.notify_end_hour}:{config.pipeline.notify_end_minute:02d} IST). Current IST time: {now_ist.strftime('%H:%M')}. Skipping notifications.")
             return 0
 
         notified = 0
         MAX_NOTIFY = config.pipeline.max_notification_articles
 
-        relevant_articles = [
-            a for a in articles
-            if a.project_area and a.project_area != "general"
-            and a.relevance_score is not None and a.relevance_score >= 20
-        ]
-        filtered_count = len(articles) - len(relevant_articles)
-        if filtered_count:
-            logger.info(f"Filtered out {filtered_count} articles with no specific project area or low relevance")
+        relevant_articles = []
+        irrelevant_articles = []
+        for a in articles:
+            if a.project_area and a.project_area != "general" and a.relevance_score is not None and a.relevance_score >= config.pipeline.min_relevance_score:
+                relevant_articles.append(a)
+            else:
+                irrelevant_articles.append(a)
+
+        if irrelevant_articles:
+            logger.info(f"Filtered out {len(irrelevant_articles)} articles with no specific project area or low relevance — marking as filtered_out")
+            for a in irrelevant_articles:
+                a.status = ArticleStatus.FILTERED_OUT
+                try:
+                    db_manager.update_article_status(
+                        source_id=a.source_id,
+                        published_date=a.published_date,
+                        article_id=a.article_id,
+                        status="filtered_out",
+                    )
+                except Exception as db_err:
+                    logger.warning(f"Failed to mark irrelevant article {a.article_id} as filtered_out: {db_err}")
+                try:
+                    await redis_manager.set(f"filtered:{a.article_id}", "1")
+                except Exception as redis_err:
+                    logger.warning(f"Redis set failed for filtered:{a.article_id}: {redis_err}")
 
         # Pre-filter: remove articles already notified (Redis check BEFORE capping)
         # This prevents already-notified articles from eating up notification slots
@@ -601,21 +633,11 @@ class PipelineOrchestrator:
 
         if len(pending_articles) > MAX_NOTIFY:
             logger.info(f"Capping notifications at {MAX_NOTIFY} articles (total: {len(pending_articles)})")
-            # Mark overflow articles as notified so they don't retry indefinitely
-            for overflow_article in all_sorted[MAX_NOTIFY:]:
-                overflow_article.status = ArticleStatus.NOTIFIED
-                try:
-                    db_manager.update_article_status(
-                        source_id=overflow_article.source_id,
-                        published_date=overflow_article.published_date,
-                        article_id=overflow_article.article_id,
-                        status="notified",
-                    )
-                except Exception as db_err:
-                    logger.warning(f"DB status update failed for overflow article {overflow_article.article_id}: {db_err}")
+            # Keep overflow articles as 'processed' so they get notified in the next cycle
+            logger.info(f"Deferring {len(all_sorted[MAX_NOTIFY:])} overflow articles to next notification cycle")
 
         try:
-            async with httpx.AsyncClient(timeout=60.0) as client:
+            async with httpx.AsyncClient(timeout=config.pipeline.notification_timeout) as client:
                 for article in sorted_articles:
 
                     area = article.project_area
@@ -676,7 +698,7 @@ class PipelineOrchestrator:
                                 logger.warning(f"Slack notification failed for {article.article_id}: {result.get('error', 'unknown')}")
 
                         # Small delay between messages to avoid rate limiting
-                        await asyncio.sleep(1)
+                        await asyncio.sleep(config.pipeline.notification_sleep_interval)
 
                     except Exception as article_err:
                         logger.warning(f"Failed to notify article {article.article_id}: {article_err}")
@@ -689,7 +711,7 @@ class PipelineOrchestrator:
     async def _load_from_queue(self, queue_name: str) -> List[Article]:
         articles = []
         while True:
-            data = await redis_manager.pop_queue(queue_name, timeout=1)
+            data = await redis_manager.pop_queue(queue_name, timeout=config.pipeline.redis_queue_timeout)
             if not data:
                 break
             try:
@@ -753,6 +775,19 @@ class PipelineOrchestrator:
                     articles.append(article)
                 except Exception as e:
                     logger.warning(f"Failed to parse incomplete article {row.get('article_id')}: {e}")
+                    # Mark unparseable articles as filtered_out so they don't retry every cycle
+                    try:
+                        aid = row.get('article_id')
+                        if aid and row.get('source_id') and row.get('published_date'):
+                            db_manager.update_article_status(
+                                source_id=row['source_id'],
+                                published_date=row['published_date'],
+                                article_id=str(aid),
+                                status="filtered_out",
+                            )
+                            logger.info(f"Marked unparseable article {aid} as filtered_out")
+                    except Exception as db_err:
+                        logger.warning(f"Failed to mark unparseable article as filtered_out: {db_err}")
             logger.info(f"Loaded {len(articles)} incomplete articles from DB")
         except Exception as e:
             logger.warning(f"Failed to load incomplete articles: {e}")
@@ -775,7 +810,7 @@ class PipelineOrchestrator:
         """Send weekly digest of positively-rated articles to each project channel."""
         # Get previous week's week_year
         today = date.today()
-        last_week = today - timedelta(days=7)
+        last_week = today - timedelta(days=config.pipeline.weekly_digest_lookback_days)
         week_year = self._get_week_year(last_week)
         iso_cal = last_week.isocalendar()
 
@@ -824,7 +859,7 @@ class PipelineOrchestrator:
                 return
 
             # Send digest to each project channel
-            async with httpx.AsyncClient(timeout=60.0) as client:
+            async with httpx.AsyncClient(timeout=config.pipeline.notification_timeout) as client:
                 for project_area, articles in area_articles.items():
                     channel = config.slack.channels.get(project_area, "#research-general")
 
@@ -845,7 +880,7 @@ class PipelineOrchestrator:
                                 },
                                 "channel": channel,
                             },
-                            timeout=30.0,
+                            timeout=config.pipeline.slack_api_timeout,
                         )
 
                         # Actually post the digest blocks directly via Slack
@@ -855,7 +890,7 @@ class PipelineOrchestrator:
                                 "https://slack.com/api/chat.postMessage",
                                 headers={"Authorization": f"Bearer {bot_token}", "Content-Type": "application/json"},
                                 json={"channel": channel, "blocks": blocks, "text": text, "unfurl_links": False},
-                                timeout=30.0,
+                                timeout=config.pipeline.slack_api_timeout,
                             )
                             result = slack_response.json()
 
@@ -901,7 +936,7 @@ class PipelineOrchestrator:
             {"type": "divider"},
         ]
 
-        for i, article in enumerate(articles[:10], 1):
+        for i, article in enumerate(articles[:config.pipeline.digest_max_articles], 1):
             title = article.get("title", "Unknown Title")[:100]
             url = article.get("url", "")
             summary = article.get("summary", "")[:200]
@@ -916,9 +951,9 @@ class PipelineOrchestrator:
 
             blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": text}})
 
-        if len(articles) > 10:
+        if len(articles) > config.pipeline.digest_max_articles:
             blocks.append({"type": "context", "elements": [
-                {"type": "mrkdwn", "text": f"_...and {len(articles) - 10} more_"}
+                {"type": "mrkdwn", "text": f"_...and {len(articles) - config.pipeline.digest_max_articles} more_"}
             ]})
 
         return blocks
@@ -930,23 +965,23 @@ orchestrator = PipelineOrchestrator()
 def setup_scheduler():
     try:
         # Pipeline (crawl + extraction + LLM, no notification): 8 AM IST (2:30 AM UTC) and 2 PM IST (8:30 AM UTC), every day
-        pipeline_morning = CronTrigger(hour=2, minute=30)
+        pipeline_morning = CronTrigger(hour=config.pipeline.pipeline_morning_hour, minute=config.pipeline.pipeline_morning_minute)
         scheduler.add_job(scheduled_pipeline_run, pipeline_morning, id="pipeline_morning", replace_existing=True)
-        logger.info("Scheduled pipeline morning run: 8:00 AM IST (2:30 AM UTC)")
+        logger.info(f"Scheduled pipeline morning run: {config.pipeline.pipeline_morning_hour}:{config.pipeline.pipeline_morning_minute:02d} UTC")
 
-        pipeline_afternoon = CronTrigger(hour=8, minute=30)
+        pipeline_afternoon = CronTrigger(hour=config.pipeline.pipeline_afternoon_hour, minute=config.pipeline.pipeline_afternoon_minute)
         scheduler.add_job(scheduled_pipeline_run, pipeline_afternoon, id="pipeline_afternoon", replace_existing=True)
-        logger.info("Scheduled pipeline afternoon run: 2:00 PM IST (8:30 AM UTC)")
+        logger.info(f"Scheduled pipeline afternoon run: {config.pipeline.pipeline_afternoon_hour}:{config.pipeline.pipeline_afternoon_minute:02d} UTC")
 
         # Notification only: every 30 min, 9:30 AM - 6:30 PM IST (4:00 AM - 1:00 PM UTC), weekdays only
-        notif_trigger = CronTrigger(hour='4-13', minute='0,30', day_of_week='mon-fri')
+        notif_trigger = CronTrigger(hour=config.pipeline.notification_cron_hours, minute=config.pipeline.notification_cron_minutes, day_of_week='mon-fri')
         scheduler.add_job(scheduled_notification_run, notif_trigger, id="notification_run", replace_existing=True)
-        logger.info("Scheduled notification run: every 30 min, 9:30 AM - 6:30 PM IST, Mon-Fri")
+        logger.info(f"Scheduled notification run: hours={config.pipeline.notification_cron_hours}, minutes={config.pipeline.notification_cron_minutes}, Mon-Fri")
 
-        # Weekly digest: Monday 9 AM IST (3:30 AM UTC)
-        digest_trigger = CronTrigger(minute=30, hour=3, day_of_week="mon")
+        # Weekly digest
+        digest_trigger = CronTrigger(minute=config.pipeline.digest_minute, hour=config.pipeline.digest_hour, day_of_week=config.pipeline.digest_day_of_week)
         scheduler.add_job(scheduled_weekly_digest, digest_trigger, id="weekly_digest", replace_existing=True)
-        logger.info("Scheduled weekly digest: Monday 9 AM IST")
+        logger.info(f"Scheduled weekly digest: {config.pipeline.digest_day_of_week} {config.pipeline.digest_hour}:{config.pipeline.digest_minute:02d} UTC")
     except Exception as e:
         logger.error(f"Scheduler setup failed: {e}")
 
@@ -960,10 +995,10 @@ async def scheduled_pipeline_run():
 async def scheduled_notification_run():
     """Notification-only run. Fires every 30 min but is guarded to 9:30 AM - 6:30 PM IST, weekdays only."""
     now_ist = datetime.now(IST)
-    notify_start = now_ist.replace(hour=9, minute=30, second=0, microsecond=0)
-    notify_end = now_ist.replace(hour=18, minute=30, second=0, microsecond=0)
+    notify_start = now_ist.replace(hour=config.pipeline.notify_start_hour, minute=config.pipeline.notify_start_minute, second=0, microsecond=0)
+    notify_end = now_ist.replace(hour=config.pipeline.notify_end_hour, minute=config.pipeline.notify_end_minute, second=0, microsecond=0)
     if now_ist < notify_start or now_ist > notify_end:
-        logger.debug(f"Outside notification window (9:30 AM - 6:30 PM IST). Current IST: {now_ist.strftime('%H:%M')}. Skipping.")
+        logger.debug(f"Outside notification window ({config.pipeline.notify_start_hour}:{config.pipeline.notify_start_minute:02d} - {config.pipeline.notify_end_hour}:{config.pipeline.notify_end_minute:02d} IST). Current IST: {now_ist.strftime('%H:%M')}. Skipping.")
         return
     logger.info(f"Starting scheduled notification run at IST {now_ist.strftime('%H:%M')}")
     await orchestrator.run_pipeline(skip_crawl=True, skip_extraction=True, skip_llm=True)

@@ -8,8 +8,8 @@ import hashlib
 import json
 import urllib.parse
 from contextlib import asynccontextmanager
-from typing import List, Dict, Any, Optional
-from datetime import datetime, date
+from typing import List, Dict, Optional
+from datetime import date
 
 from fastapi import FastAPI, Request, HTTPException
 from fastapi.responses import JSONResponse
@@ -101,7 +101,7 @@ class SlackClient:
                 "https://slack.com/api/chat.postMessage",
                 headers={"Authorization": f"Bearer {self.bot_token}", "Content-Type": "application/json"},
                 json={"channel": channel, "blocks": blocks, "text": text, "unfurl_links": False, "unfurl_media": False},
-                timeout=30.0,
+                timeout=config.pipeline.slack_api_timeout,
             )
             return response.json()
 
@@ -140,15 +140,16 @@ class MessageFormatter:
         if article.sub_topic:
             tag_name = SUB_TOPIC_TAGS.get(article.sub_topic, article.sub_topic)
             sub_topic_tag = f" `{tag_name}`"
-
+        domain = article.url.split('/')[2] if article.url else None
         # Title with sub-topic tag
         blocks = [
             {"type": "section", "text": {"type": "mrkdwn", "text": f"📄 *<{article.url}|{title}>*"}},
             {"type": "context", "elements": [
                 e for e in [
                     {"type": "mrkdwn", "text": sub_topic_tag} if sub_topic_tag else None,
+                    {"type": "mrkdwn", "text": f" `{domain}`"} if domain else None,
                     {"type": "mrkdwn", "text": f"📅 {article.published_date}"} if article.published_date else None,
-                    {"type": "mrkdwn", "text": f"{evidence_badge} Confidence: {article.evidence_level or 'N/A'}/5"},
+                    # {"type": "mrkdwn", "text": f"{evidence_badge} Confidence: {article.evidence_level or 'N/A'}/5"},
                     {"type": "mrkdwn", "text": "📋 Abstract only"} if not article.full_text else None,
                 ] if e is not None
             ]},
@@ -167,39 +168,39 @@ class MessageFormatter:
                 summary_text = summary_text.replace('\n-', '\n• ').replace('-', '•', 1)
             full_text = f"*Summary:*\n{summary_text}"
             # Slack section text blocks have a 3000-char limit
-            if len(full_text) > 2900:
-                full_text = full_text[:2897] + "..."
+            if len(full_text) > config.pipeline.slack_section_text_limit:
+                full_text = full_text[:config.pipeline.slack_section_text_limit - 3] + "..."
             blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": full_text}})
 
         # Add feedback buttons
         # Encode article metadata in button value: article_id|source_id|published_date
-        button_value = f"{article.article_id}|{article.source_id}|{article.published_date}"
-        blocks.append({"type": "divider"})
-        blocks.append({
-            "type": "actions",
-            "block_id": f"feedback_{article.article_id}",
-            "elements": [
-                {
-                    "type": "button",
-                    "text": {"type": "plain_text", "text": "👍 Useful", "emoji": True},
-                    "style": "primary",
-                    "action_id": "feedback_positive",
-                    "value": button_value,
-                },
-                {
-                    "type": "button",
-                    "text": {"type": "plain_text", "text": "👎 Not Useful", "emoji": True},
-                    "action_id": "feedback_negative",
-                    "value": button_value,
-                },
-                {
-                    "type": "button",
-                    "text": {"type": "plain_text", "text": "💬 Comment", "emoji": True},
-                    "action_id": "feedback_comment",
-                    "value": button_value,
-                },
-            ],
-        })
+        # button_value = f"{article.article_id}|{article.source_id}|{article.published_date}"
+        # blocks.append({"type": "divider"})
+        # blocks.append({
+        #     "type": "actions",
+        #     "block_id": f"feedback_{article.article_id}",
+        #     "elements": [
+        #         {
+        #             "type": "button",
+        #             "text": {"type": "plain_text", "text": "👍 Useful", "emoji": True},
+        #             "style": "primary",
+        #             "action_id": "feedback_positive",
+        #             "value": button_value,
+        #         },
+        #         {
+        #             "type": "button",
+        #             "text": {"type": "plain_text", "text": "👎 Not Useful", "emoji": True},
+        #             "action_id": "feedback_negative",
+        #             "value": button_value,
+        #         },
+        #         {
+        #             "type": "button",
+        #             "text": {"type": "plain_text", "text": "💬 Comment", "emoji": True},
+        #             "action_id": "feedback_comment",
+        #             "value": button_value,
+        #         },
+        #     ],
+        # })
 
         return blocks, title
     
@@ -246,7 +247,7 @@ class MessageFormatter:
 
         sorted_articles = sorted(articles, key=lambda a: (a.evidence_level or 0), reverse=True)
 
-        for i, article in enumerate(sorted_articles[:10], 1):
+        for i, article in enumerate(sorted_articles[:config.pipeline.digest_max_articles], 1):
             badge = EVIDENCE_BADGES.get(article.evidence_level or 2, "🟡")
 
             # Get sub-topic tag
@@ -259,11 +260,11 @@ class MessageFormatter:
             date_str = f"📅 {article.published_date} | " if article.published_date else ""
             text = f"*{i}. <{article.url}|{clean_title}>*{tag_str}\n{date_str}{badge} Level {article.evidence_level or 'N/A'}"
             if article.summary:
-                text += f"\n>{truncate_text(article.summary, 150)}"
+                text += f"\n>{truncate_text(article.summary, config.pipeline.digest_summary_truncate)}"
             blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": text}})
 
-        if len(articles) > 10:
-            blocks.append({"type": "context", "elements": [{"type": "mrkdwn", "text": f"_...and {len(articles) - 10} more_"}]})
+        if len(articles) > config.pipeline.digest_max_articles:
+            blocks.append({"type": "context", "elements": [{"type": "mrkdwn", "text": f"_...and {len(articles) - config.pipeline.digest_max_articles} more_"}]})
 
         return blocks, f"Daily digest: {len(articles)} articles"
 
@@ -474,7 +475,7 @@ async def open_comment_modal(trigger_id: str, article_id: str, source_id: str, p
             "https://slack.com/api/views.open",
             headers={"Authorization": f"Bearer {bot_token}", "Content-Type": "application/json"},
             json={"trigger_id": trigger_id, "view": modal},
-            timeout=10.0,
+            timeout=config.pipeline.slack_modal_timeout,
         )
         result = response.json()
         if not result.get("ok"):

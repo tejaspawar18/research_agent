@@ -4,7 +4,11 @@ PDF full text extractor.
 import logging
 import re
 from typing import Optional
+import sys
 import aiohttp
+
+sys.path.insert(0, '/app')
+from shared.config import config
 
 logger = logging.getLogger(__name__)
 
@@ -13,7 +17,7 @@ class PDFExtractor:
     """Extract text from PDF files."""
 
     @staticmethod
-    async def extract(pdf_url: str, max_size_mb: int = 10) -> Optional[str]:
+    async def extract(pdf_url: str, max_size_mb: int = None) -> Optional[str]:
         """
         Extract text from PDF.
 
@@ -24,6 +28,8 @@ class PDFExtractor:
         Returns:
             Extracted text or None
         """
+        if max_size_mb is None:
+            max_size_mb = config.pipeline.pdf_max_size_mb
         try:
             # Try to import PDF libraries
             try:
@@ -38,7 +44,7 @@ class PDFExtractor:
                 headers = {
                     "User-Agent": "Mozilla/5.0 (compatible; PreventiveHealthBot/1.0)",
                 }
-                async with session.get(pdf_url, headers=headers, timeout=60) as response:
+                async with session.get(pdf_url, headers=headers, timeout=config.pipeline.pdf_download_timeout) as response:
                     if response.status != 200:
                         logger.warning(f"PDF download failed: {response.status} for {pdf_url}")
                         return None
@@ -69,9 +75,9 @@ class PDFExtractor:
                 logger.warning(f"PDF has no pages: {pdf_url}")
                 return None
 
-            if num_pages > 100:
-                logger.warning(f"PDF has too many pages ({num_pages}), limiting to first 100")
-                num_pages = 100
+            if num_pages > config.pipeline.pdf_max_pages:
+                logger.warning(f"PDF has too many pages ({num_pages}), limiting to first {config.pipeline.pdf_max_pages}")
+                num_pages = config.pipeline.pdf_max_pages
 
             text_parts = []
             for page_num in range(num_pages):
