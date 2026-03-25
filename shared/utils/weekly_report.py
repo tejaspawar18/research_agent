@@ -5,6 +5,7 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 from pathlib import Path
+import re
 from typing import Any, Dict, List, Optional
 from xml.sax.saxutils import escape
 
@@ -99,6 +100,47 @@ def _truncate_text(value: str, limit: int = 420) -> str:
     if len(normalized) <= limit:
         return normalized
     return normalized[: limit - 3].rstrip() + "..."
+
+
+def _humanize_token(value: str) -> str:
+    cleaned = re.sub(r"[._\-]+", " ", (value or "").strip())
+    cleaned = " ".join(cleaned.split())
+    if not cleaned:
+        return ""
+    return cleaned.title()
+
+
+def _format_section_heading(channel: str, project_area: str) -> str:
+    label = project_area_label(project_area)
+    if label and label != PROJECT_AREA_LABELS["general"]:
+        return label
+
+    normalized_channel = (channel or "").strip()
+    if normalized_channel.startswith("#"):
+        normalized_channel = normalized_channel[1:]
+    humanized_channel = _humanize_token(normalized_channel)
+    return humanized_channel or label or "General Research"
+
+
+def _format_user_display_name(user: WeeklyReportUser) -> str:
+    name = (user.user_name or "").strip()
+    user_id = (user.user_id or "").strip()
+
+    if name and name.lower() != "unknown user" and name != user_id:
+        if "@" in name:
+            return name
+        pretty_name = _humanize_token(name)
+        return pretty_name or name
+
+    if user_id:
+        if user_id.startswith("U") and user_id.upper() == user_id:
+            return user_id
+        if "@" in user_id:
+            return user_id
+        pretty_id = _humanize_token(user_id)
+        return pretty_id or user_id
+
+    return "Unknown User"
 
 
 def week_year_bounds(week_year: str) -> tuple[date, date]:
@@ -244,7 +286,6 @@ def render_weekly_feedback_pdf(
             "Install it with the orchestrator dependencies."
         ) from exc
 
-    generated_at = generated_at or datetime.utcnow()
     top_feedback_users = top_feedback_users or []
     start_date, end_date = week_year_bounds(week_year)
     report_path = Path(output_path)
@@ -262,15 +303,6 @@ def render_weekly_feedback_pdf(
         textColor=colors.HexColor("#4b5563"),
         alignment=TA_LEFT,
         spaceAfter=4,
-    )
-    url_style = ParagraphStyle(
-        "WeeklyReportUrl",
-        parent=styles["BodyText"],
-        fontSize=8,
-        leading=10,
-        textColor=colors.HexColor("#1d4ed8"),
-        wordWrap="CJK",
-        spaceAfter=6,
     )
     article_title_style = ParagraphStyle(
         "WeeklyReportArticleTitle",
@@ -299,24 +331,55 @@ def render_weekly_feedback_pdf(
             heading_style,
         ),
         Paragraph(
-            f"Generated at {generated_at.strftime('%Y-%m-%d %H:%M:%S UTC')}",
-            meta_style,
-        ),
-        Paragraph(
             f"Slack channel sections: {len(sections)} | Articles included: {sum(len(section.articles) for section in sections)}",
             meta_style,
         ),
         Spacer(1, 10),
     ]
 
+    if not sections:
+        story.append(Paragraph("No positively rated articles were found for this report window.", body_style))
+    else:
+        for section_index, section in enumerate(sections, start=1):
+            if section_index > 1:
+                story.extend([Spacer(1, 8), HRFlowable(width="100%", color=colors.HexColor("#cbd5e1")), Spacer(1, 10)])
+
+            section_heading = _format_section_heading(section.channel, section.project_area)
+            story.append(Paragraph(escape(section_heading), section_heading_style))
+            story.append(Spacer(1, 4))
+
+            for article_index, article in enumerate(section.articles, start=1):
+                title = escape(article.title or "Untitled")
+                if article.url:
+                    article_url = escape(article.url, {'"': "&quot;"})
+                    story.append(
+                        Paragraph(
+                            f'{article_index}. <link href="{article_url}" color="#1d4ed8">{title}</link>',
+                            article_title_style,
+                        )
+                    )
+                else:
+                    story.append(Paragraph(f"{article_index}. {title}", article_title_style))
+
+                meta_parts = [f"Positive feedback: {article.positive_feedback_count}"]
+                if article.published_date:
+                    meta_parts.append(f"Published: {article.published_date.isoformat()}")
+                story.append(Paragraph(" | ".join(meta_parts), meta_style))
+
+                if article.summary:
+                    summary_text = escape(article.summary).replace("\n", "<br/>")
+                    story.append(Paragraph(summary_text, body_style))
+
+                story.append(Spacer(1, 8))
+
     if top_feedback_users:
+        if sections:
+            story.extend([Spacer(1, 8), HRFlowable(width="100%", color=colors.HexColor("#cbd5e1")), Spacer(1, 10)])
+
         story.append(Paragraph("Top Feedback Users", section_heading_style))
         table_rows = [["Rank", "User", "Feedback Count"]]
         for rank, user in enumerate(top_feedback_users, start=1):
-            display_name = user.user_name or user.user_id or "Unknown User"
-            if user.user_id and display_name != user.user_id:
-                display_name = f"{display_name} ({user.user_id})"
-            table_rows.append([str(rank), display_name, str(user.feedback_count)])
+            table_rows.append([str(rank), _format_user_display_name(user), str(user.feedback_count)])
 
         users_table = Table(table_rows, colWidths=[46, 336, 92], hAlign="LEFT")
         users_table.setStyle(
@@ -341,34 +404,6 @@ def render_weekly_feedback_pdf(
         )
         story.append(users_table)
         story.append(Spacer(1, 12))
-
-    if not sections:
-        story.append(Paragraph("No positively rated articles were found for this report window.", body_style))
-    else:
-        for section_index, section in enumerate(sections, start=1):
-            if section_index > 1:
-                story.extend([Spacer(1, 8), HRFlowable(width="100%", color=colors.HexColor("#cbd5e1")), Spacer(1, 10)])
-
-            story.append(Paragraph(f"{escape(section.channel)}", section_heading_style))
-            story.append(Paragraph(project_area_label(section.project_area), meta_style))
-            story.append(Spacer(1, 4))
-
-            for article_index, article in enumerate(section.articles, start=1):
-                title = escape(article.title or "Untitled")
-                story.append(Paragraph(f"{article_index}. {title}", article_title_style))
-
-                meta_parts = [f"Positive feedback: {article.positive_feedback_count}"]
-                if article.published_date:
-                    meta_parts.append(f"Published: {article.published_date.isoformat()}")
-                story.append(Paragraph(" | ".join(meta_parts), meta_style))
-
-                if article.url:
-                    story.append(Paragraph(f"URL: {escape(article.url)}", url_style))
-
-                if article.summary:
-                    story.append(Paragraph(escape(_truncate_text(article.summary)), body_style))
-
-                story.append(Spacer(1, 8))
 
     def add_page_number(canvas, doc):
         canvas.saveState()
