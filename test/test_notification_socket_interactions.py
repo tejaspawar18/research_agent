@@ -1,6 +1,10 @@
 import asyncio
 
-from services.notification.main import handle_interaction_payload
+from services.notification.main import (
+    SlackFeedbackIngestor,
+    get_interaction_response_payload,
+    handle_interaction_payload,
+)
 
 
 def test_handle_interaction_payload_stores_positive_feedback(monkeypatch):
@@ -78,3 +82,42 @@ def test_handle_interaction_payload_opens_comment_modal(monkeypatch):
         "message_ts": "1742900000.000100",
         "channel": "C123",
     }
+
+
+def test_get_interaction_response_payload_clears_comment_modal_submission():
+    payload = {
+        "type": "view_submission",
+        "view": {"callback_id": "comment_modal_article-1"},
+    }
+
+    assert get_interaction_response_payload(payload) == {"response_action": "clear"}
+
+
+def test_socket_mode_acknowledges_interactive_request_before_processing(monkeypatch):
+    call_order = []
+
+    class FakeClient:
+        async def send_socket_mode_response(self, response):
+            call_order.append(("ack", response.envelope_id))
+
+    class FakeReq:
+        type = "interactive"
+        envelope_id = "env-123"
+        payload = {"type": "block_actions", "actions": []}
+
+    async def fake_handle_interaction_payload(payload):
+        call_order.append(("process", payload["type"]))
+        return {}
+
+    monkeypatch.setattr(
+        "services.notification.main.handle_interaction_payload",
+        fake_handle_interaction_payload,
+    )
+
+    ingestor = SlackFeedbackIngestor(db=object())
+    asyncio.run(ingestor._handle_socket_request(FakeClient(), FakeReq()))
+
+    assert call_order == [
+        ("ack", "env-123"),
+        ("process", "block_actions"),
+    ]

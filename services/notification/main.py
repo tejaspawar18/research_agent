@@ -147,26 +147,24 @@ class SlackFeedbackIngestor:
 
     async def _handle_socket_request(self, client: Any, req: Any):
         """Handle Socket Mode events and interactive payloads."""
-        response_payload = None
+        try:
+            from slack_sdk.socket_mode.response import SocketModeResponse
+
+            response_payload = get_interaction_response_payload(req.payload) if req.type == "interactive" else None
+            await client.send_socket_mode_response(SocketModeResponse(envelope_id=req.envelope_id, payload=response_payload))
+        except Exception as exc:
+            logger.warning(f"Failed to acknowledge Slack Socket Mode request: {exc}")
+            return
 
         try:
             if req.type == "events_api":
                 await self.handle_events_payload(req.payload)
             elif req.type == "interactive":
-                response_payload = await handle_interaction_payload(req.payload)
+                await handle_interaction_payload(req.payload)
             else:
                 logger.debug(f"Ignoring unsupported Slack Socket Mode request type: {req.type}")
         except Exception as exc:
             logger.warning(f"Failed to process Slack Socket Mode request {getattr(req, 'type', 'unknown')}: {exc}")
-
-        try:
-            from slack_sdk.socket_mode.response import SocketModeResponse
-
-            await client.send_socket_mode_response(
-                SocketModeResponse(envelope_id=req.envelope_id, payload=response_payload)
-            )
-        except Exception as exc:
-            logger.warning(f"Failed to acknowledge Slack Socket Mode request: {exc}")
 
     async def handle_events_payload(self, payload: Dict[str, Any]):
         """Handle a Slack Events API payload."""
@@ -607,6 +605,17 @@ async def slack_events(request: Request):
 
     await feedback_ingestor.handle_events_payload(payload)
     return JSONResponse(content={"ok": True})
+
+
+def get_interaction_response_payload(payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """Return the immediate acknowledgment payload Slack expects for interactions."""
+    payload_type = payload.get("type")
+    if payload_type == "view_submission":
+        view = payload.get("view", {})
+        callback_id = view.get("callback_id", "")
+        if callback_id.startswith("comment_modal_"):
+            return {"response_action": "clear"}
+    return None
 
 
 async def handle_interaction_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
