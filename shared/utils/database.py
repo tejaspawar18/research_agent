@@ -466,16 +466,35 @@ class ScyllaDBManager:
             feedback_uuid = uuid.UUID(str(feedback_id))
         self.execute_prepared(query, (week_year, feedback_uuid))
 
+    def get_article_feedback(self, week_year: str, feedback_id: Any) -> Optional[Dict]:
+        """Fetch a feedback row by week partition and feedback id."""
+        query = """
+            SELECT * FROM governance_article_feedback
+            WHERE week_year = ? AND feedback_id = ?
+        """
+        if isinstance(feedback_id, uuid.UUID):
+            feedback_uuid = feedback_id
+        else:
+            feedback_uuid = uuid.UUID(str(feedback_id))
+
+        rows = self.execute_prepared(query, (week_year, feedback_uuid))
+        for row in rows:
+            return dict(row._asdict())
+        return None
+
     def get_positive_feedback_articles(self, week_year: str) -> List[Dict]:
         """Get articles with positive feedback for a given week."""
+        rows = self.get_feedback_for_week(week_year)
+        return [row for row in rows if (row.get("feedback_type") or "").strip().lower() == "positive"]
+
+    def get_feedback_for_week(self, week_year: str) -> List[Dict]:
+        """Get all feedback rows for a given week."""
         query = """
             SELECT * FROM governance_article_feedback
             WHERE week_year = ?
         """
         rows = self.execute_prepared(query, (week_year,))
-        # Filter in Python since we need feedback_type='positive'
-        positive = [dict(row._asdict()) for row in rows if row.feedback_type == "positive"]
-        return positive
+        return [dict(row._asdict()) for row in rows]
 
     def get_slack_messages_for_week(self, week_year: str) -> List[Dict]:
         """Get all Slack messages for a given week."""

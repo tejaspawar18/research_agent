@@ -341,6 +341,19 @@ class SlackClient:
             )
             return response.json()
 
+    async def post_ephemeral(self, channel: str, user: str, text: str) -> Dict:
+        if not self.bot_token:
+            raise ValueError("SLACK_BOT_TOKEN not configured")
+
+        async with httpx.AsyncClient() as client:
+            response = await client.post(
+                "https://slack.com/api/chat.postEphemeral",
+                headers={"Authorization": f"Bearer {self.bot_token}", "Content-Type": "application/json"},
+                json={"channel": channel, "user": user, "text": text},
+                timeout=config.pipeline.slack_api_timeout,
+            )
+            return response.json()
+
 
 class MessageFormatter:
     @staticmethod
@@ -626,6 +639,26 @@ def get_interaction_response_payload(payload: Dict[str, Any]) -> Optional[Dict[s
     return None
 
 
+async def _notify_duplicate_button_feedback(channel_id: str, user_id: str, existing_feedback_type: str):
+    """Send an ephemeral notice when a user attempts to vote again."""
+    if not channel_id or not user_id:
+        return
+
+    feedback_label = {
+        "positive": "Useful",
+        "negative": "Not Useful",
+    }.get((existing_feedback_type or "").strip().lower(), "feedback")
+    message = (
+        f"You already submitted *{feedback_label}* for this article. "
+        "Only one button vote is allowed."
+    )
+
+    try:
+        await slack_client.post_ephemeral(channel=channel_id, user=user_id, text=message)
+    except Exception as exc:
+        logger.warning(f"Failed to send duplicate-feedback notice to {user_id} in {channel_id}: {exc}")
+
+
 async def handle_interaction_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
     """Handle Slack interactive component payloads from HTTP or Socket Mode."""
     payload_type = payload.get("type")
@@ -665,16 +698,35 @@ async def handle_interaction_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
                 message_ts = message.get("ts", "")
                 channel_id = channel.get("id", "")
                 user_id = user.get("id", "")
+                if not message_ts or not channel_id or not user_id:
+                    logger.error(
+                        "Missing interaction identity fields: "
+                        f"message_ts={message_ts!r}, channel_id={channel_id!r}, user_id={user_id!r}"
+                    )
+                    return {}
+
                 week_year = get_week_year_from_message_ts(message_ts)
                 feedback_id = build_feedback_id(
-                    "button",
+                    "button_vote_once",
                     week_year,
                     channel_id,
                     message_ts,
                     user_id,
-                    action.get("action_ts", ""),
-                    feedback_type,
                 )
+
+                existing_feedback = scylla_manager.get_article_feedback(week_year, feedback_id)
+                if existing_feedback:
+                    await _notify_duplicate_button_feedback(
+                        channel_id=channel_id,
+                        user_id=user_id,
+                        existing_feedback_type=str(existing_feedback.get("feedback_type") or ""),
+                    )
+                    logger.info(
+                        f"Ignored duplicate button feedback for article {article_id} "
+                        f"from user {user_id} on message {message_ts}"
+                    )
+                    return {}
+
                 try:
                     scylla_manager.insert_article_feedback(
                         week_year=week_year,

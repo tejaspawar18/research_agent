@@ -17,6 +17,10 @@ def test_handle_interaction_payload_stores_positive_feedback(monkeypatch):
         "services.notification.main.scylla_manager.insert_article_feedback",
         fake_insert_article_feedback,
     )
+    monkeypatch.setattr(
+        "services.notification.main.scylla_manager.get_article_feedback",
+        lambda week_year, feedback_id: None,
+    )
 
     payload = {
         "type": "block_actions",
@@ -82,6 +86,73 @@ def test_handle_interaction_payload_opens_comment_modal(monkeypatch):
         "message_ts": "1742900000.000100",
         "channel": "C123",
     }
+
+
+def test_handle_interaction_payload_blocks_repeat_button_feedback(monkeypatch):
+    inserted_rows = []
+    stored_by_feedback_id = {}
+    ephemeral_messages = []
+
+    def fake_insert_article_feedback(**kwargs):
+        inserted_rows.append(kwargs)
+        stored_by_feedback_id[str(kwargs["feedback_id"])] = {
+            "feedback_type": kwargs["feedback_type"],
+        }
+
+    def fake_get_article_feedback(week_year, feedback_id):
+        return stored_by_feedback_id.get(str(feedback_id))
+
+    async def fake_post_ephemeral(channel, user, text):
+        ephemeral_messages.append((channel, user, text))
+        return {"ok": True}
+
+    monkeypatch.setattr(
+        "services.notification.main.scylla_manager.insert_article_feedback",
+        fake_insert_article_feedback,
+    )
+    monkeypatch.setattr(
+        "services.notification.main.scylla_manager.get_article_feedback",
+        fake_get_article_feedback,
+    )
+    monkeypatch.setattr(
+        "services.notification.main.slack_client.post_ephemeral",
+        fake_post_ephemeral,
+    )
+
+    base_payload = {
+        "type": "block_actions",
+        "user": {"id": "U123", "name": "tester"},
+        "channel": {"id": "C123"},
+        "message": {"ts": "1742900000.000100"},
+        "actions": [
+            {
+                "action_id": "feedback_positive",
+                "value": "article-1|source-1|2026-03-25",
+            }
+        ],
+    }
+
+    payload_first = {**base_payload, "trigger_id": "trigger-1"}
+    payload_second = {
+        **base_payload,
+        "actions": [
+            {
+                "action_id": "feedback_negative",
+                "value": "article-1|source-1|2026-03-25",
+            }
+        ],
+        "trigger_id": "trigger-2",
+    }
+
+    asyncio.run(handle_interaction_payload(payload_first))
+    asyncio.run(handle_interaction_payload(payload_second))
+
+    assert len(inserted_rows) == 1
+    assert inserted_rows[0]["feedback_type"] == "positive"
+    assert len(ephemeral_messages) == 1
+    assert ephemeral_messages[0][0] == "C123"
+    assert ephemeral_messages[0][1] == "U123"
+    assert "Only one button vote is allowed." in ephemeral_messages[0][2]
 
 
 def test_get_interaction_response_payload_clears_comment_modal_submission():

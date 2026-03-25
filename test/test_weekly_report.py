@@ -3,6 +3,7 @@ from datetime import date, datetime
 import pytest
 
 from shared.utils.weekly_report import (
+    build_top_feedback_users,
     build_weekly_report_sections,
     render_weekly_feedback_pdf,
     week_year_bounds,
@@ -115,16 +116,45 @@ def test_week_year_bounds_returns_monday_to_sunday_for_iso_week():
     assert end == date(2026, 3, 29)
 
 
+def test_build_top_feedback_users_returns_ranked_users_by_feedback_count():
+    feedback_rows = [
+        {"feedback_type": "positive", "user_id": "U-ALICE", "user_name": "alice"},
+        {"feedback_type": "comment", "user_id": "U-ALICE", "user_name": "alice"},
+        {"feedback_type": "negative", "user_id": "U-BOB", "user_name": "bob"},
+        {"feedback_type": "reaction", "user_id": "U-BOB", "user_name": "bob"},
+        {"feedback_type": "positive", "user_id": "U-ALICE", "user_name": "alice"},
+        {"feedback_type": "positive", "user_id": "U-CHARLIE", "user_name": "charlie"},
+        {"feedback_type": "positive", "user_name": "guest-user"},
+        {"feedback_type": "positive"},
+    ]
+
+    top_users = build_top_feedback_users(feedback_rows, top_n=3)
+
+    assert [(user.user_name, user.feedback_count) for user in top_users] == [
+        ("alice", 3),
+        ("bob", 2),
+        ("charlie", 1),
+    ]
+
+
 def test_render_weekly_feedback_pdf_writes_local_pdf_file(tmp_path):
     pytest.importorskip("reportlab")
 
     output_path = tmp_path / "weekly_feedback_report_2026-W13.pdf"
     sections = _sample_weekly_report_sections()
+    top_users = build_top_feedback_users(
+        [
+            {"feedback_type": "positive", "user_id": "U-ALICE", "user_name": "alice"},
+            {"feedback_type": "comment", "user_id": "U-ALICE", "user_name": "alice"},
+            {"feedback_type": "negative", "user_id": "U-BOB", "user_name": "bob"},
+        ]
+    )
 
     render_weekly_feedback_pdf(
         output_path=str(output_path),
         week_year="2026-W13",
         sections=sections,
+        top_feedback_users=top_users,
         generated_at=datetime(2026, 3, 30, 4, 30, 0),
     )
 

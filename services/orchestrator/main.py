@@ -29,6 +29,7 @@ from shared.utils import (
     RedisManager,
     KafkaManager,
     S3Manager,
+    build_top_feedback_users,
     build_weekly_report_sections,
     initialize_schema,
     render_weekly_feedback_pdf,
@@ -874,7 +875,11 @@ class PipelineOrchestrator:
         logger.info(f"Generating weekly feedback report for {resolved_week_year}")
 
         try:
-            positive_feedback = db_manager.get_positive_feedback_articles(resolved_week_year)
+            feedback_rows = db_manager.get_feedback_for_week(resolved_week_year)
+            positive_feedback = [
+                row for row in feedback_rows
+                if (row.get("feedback_type") or "").strip().lower() == "positive"
+            ]
             if not positive_feedback:
                 logger.info(f"No positive feedback found for {resolved_week_year}")
                 return {
@@ -893,6 +898,10 @@ class PipelineOrchestrator:
                 positive_feedback=positive_feedback,
                 slack_messages=slack_messages,
                 top_n=config.pipeline.weekly_report_top_articles_per_channel,
+            )
+            top_feedback_users = build_top_feedback_users(
+                feedback_rows,
+                top_n=config.pipeline.weekly_report_top_users,
             )
 
             if not sections:
@@ -913,6 +922,7 @@ class PipelineOrchestrator:
                 output_path=str(report_path),
                 week_year=resolved_week_year,
                 sections=sections,
+                top_feedback_users=top_feedback_users,
                 generated_at=datetime.utcnow(),
             )
 

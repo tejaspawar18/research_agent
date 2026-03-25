@@ -113,6 +113,7 @@ class PipelineConfig(BaseModel):
     # Weekly report settings
     weekly_report_lookback_days: int = 7
     weekly_report_top_articles_per_channel: int = 5
+    weekly_report_top_users: int = 10
     weekly_report_output_dir: str = "data/weekly_reports"
 
     # Schedule settings (UTC times)

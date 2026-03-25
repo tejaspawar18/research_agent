@@ -45,6 +45,8 @@ from .metrics import (
 from .weekly_report import (
     WeeklyReportArticle,
     WeeklyReportSection,
+    WeeklyReportUser,
+    build_top_feedback_users,
     build_weekly_report_sections,
     project_area_label,
     render_weekly_feedback_pdf,
@@ -98,6 +100,8 @@ __all__ = [
     # Weekly report helpers
     "WeeklyReportArticle",
     "WeeklyReportSection",
+    "WeeklyReportUser",
+    "build_top_feedback_users",
     "build_weekly_report_sections",
     "project_area_label",
     "render_weekly_feedback_pdf",

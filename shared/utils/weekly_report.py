@@ -44,6 +44,15 @@ class WeeklyReportSection:
     articles: List[WeeklyReportArticle] = field(default_factory=list)
 
 
+@dataclass
+class WeeklyReportUser:
+    """Aggregated feedback contributor row for the weekly report."""
+
+    user_id: str
+    user_name: str
+    feedback_count: int = 0
+
+
 def project_area_label(project_area: Optional[str]) -> str:
     """Return a human-friendly project area label."""
     normalized = (project_area or "general").strip().lower()
@@ -176,10 +185,50 @@ def build_weekly_report_sections(
     return sections
 
 
+def build_top_feedback_users(
+    feedback_rows: List[Dict[str, Any]],
+    top_n: int = 10,
+) -> List[WeeklyReportUser]:
+    """Aggregate weekly feedback rows into top contributors."""
+    if top_n <= 0:
+        return []
+
+    aggregated: Dict[str, WeeklyReportUser] = {}
+
+    for feedback in feedback_rows:
+        user_id = str(feedback.get("user_id") or "").strip()
+        user_name = str(feedback.get("user_name") or "").strip()
+        if not user_id and not user_name:
+            continue
+
+        key = user_id or user_name.lower()
+        if key not in aggregated:
+            aggregated[key] = WeeklyReportUser(
+                user_id=user_id,
+                user_name=user_name or user_id or "Unknown User",
+                feedback_count=0,
+            )
+        elif not aggregated[key].user_name and user_name:
+            aggregated[key].user_name = user_name
+
+        aggregated[key].feedback_count += 1
+
+    users = list(aggregated.values())
+    users.sort(
+        key=lambda item: (
+            -item.feedback_count,
+            (item.user_name or item.user_id).lower(),
+            item.user_id.lower(),
+        )
+    )
+    return users[:top_n]
+
+
 def render_weekly_feedback_pdf(
     output_path: str,
     week_year: str,
     sections: List[WeeklyReportSection],
+    top_feedback_users: Optional[List[WeeklyReportUser]] = None,
     generated_at: Optional[datetime] = None,
 ):
     """Render the weekly report PDF to ``output_path``."""
@@ -188,7 +237,7 @@ def render_weekly_feedback_pdf(
         from reportlab.lib.enums import TA_LEFT
         from reportlab.lib.pagesizes import A4
         from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
-        from reportlab.platypus import HRFlowable, Paragraph, SimpleDocTemplate, Spacer
+        from reportlab.platypus import HRFlowable, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
     except ImportError as exc:
         raise RuntimeError(
             "reportlab is required to generate the weekly feedback PDF. "
@@ -196,6 +245,7 @@ def render_weekly_feedback_pdf(
         ) from exc
 
     generated_at = generated_at or datetime.utcnow()
+    top_feedback_users = top_feedback_users or []
     start_date, end_date = week_year_bounds(week_year)
     report_path = Path(output_path)
     report_path.parent.mkdir(parents=True, exist_ok=True)
@@ -258,6 +308,39 @@ def render_weekly_feedback_pdf(
         ),
         Spacer(1, 10),
     ]
+
+    if top_feedback_users:
+        story.append(Paragraph("Top Feedback Users", section_heading_style))
+        table_rows = [["Rank", "User", "Feedback Count"]]
+        for rank, user in enumerate(top_feedback_users, start=1):
+            display_name = user.user_name or user.user_id or "Unknown User"
+            if user.user_id and display_name != user.user_id:
+                display_name = f"{display_name} ({user.user_id})"
+            table_rows.append([str(rank), display_name, str(user.feedback_count)])
+
+        users_table = Table(table_rows, colWidths=[46, 336, 92], hAlign="LEFT")
+        users_table.setStyle(
+            TableStyle(
+                [
+                    ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#e2e8f0")),
+                    ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor("#0f172a")),
+                    ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+                    ("FONTSIZE", (0, 0), (-1, 0), 10),
+                    ("ALIGN", (0, 0), (0, -1), "CENTER"),
+                    ("ALIGN", (2, 1), (2, -1), "RIGHT"),
+                    ("FONTNAME", (0, 1), (-1, -1), "Helvetica"),
+                    ("FONTSIZE", (0, 1), (-1, -1), 9),
+                    ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#cbd5e1")),
+                    ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                    ("LEFTPADDING", (0, 0), (-1, -1), 6),
+                    ("RIGHTPADDING", (0, 0), (-1, -1), 6),
+                    ("TOPPADDING", (0, 0), (-1, -1), 5),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+                ]
+            )
+        )
+        story.append(users_table)
+        story.append(Spacer(1, 12))
 
     if not sections:
         story.append(Paragraph("No positively rated articles were found for this report window.", body_style))
