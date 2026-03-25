@@ -7,7 +7,7 @@ import logging
 from typing import List, Dict, Any, Optional
 from pathlib import Path
 from pydantic import BaseModel, Field
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 logger = logging.getLogger(__name__)
 
@@ -167,6 +167,12 @@ class PipelineConfig(BaseModel):
 
 class Settings(BaseSettings):
     """Application settings from environment."""
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
     environment: str = "development"
     debug: bool = False
     log_level: str = "INFO"
@@ -208,11 +214,6 @@ class Settings(BaseSettings):
     aws_secret_access_key: str = ""
     aws_region: str = "ap-south-1"
     s3_bucket: str = "pulse-narrative"
-
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
-
 
 class SourceConfigItem(BaseModel):
     """Individual source configuration."""
