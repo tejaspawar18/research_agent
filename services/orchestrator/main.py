@@ -4,9 +4,11 @@ Orchestrator Service - Pipeline coordination and scheduling.
 import logging
 import asyncio
 import os
+import uuid
 from contextlib import asynccontextmanager
 from typing import List, Dict, Any, Optional
 from datetime import datetime, date, timezone, timedelta
+from pathlib import Path
 import json
 
 # IST timezone (UTC+5:30)
@@ -22,7 +24,15 @@ import sys
 sys.path.insert(0, '/app')
 
 from shared.models import Article, PipelineRun, ArticleStatus, ProjectArea
-from shared.utils import ScyllaDBManager, RedisManager, KafkaManager, S3Manager, initialize_schema
+from shared.utils import (
+    ScyllaDBManager,
+    RedisManager,
+    KafkaManager,
+    S3Manager,
+    build_weekly_report_sections,
+    initialize_schema,
+    render_weekly_feedback_pdf,
+)
 from shared.utils.slack_feedback import get_week_year, get_week_year_from_message_ts
 from shared.utils.metrics import (
     add_metrics_endpoint,
@@ -80,6 +90,48 @@ class PipelineResponse(BaseModel):
     run_id: str
     status: str
     message: str
+
+
+class WeeklyReportRequest(BaseModel):
+    week_year: Optional[str] = None
+
+
+class WeeklyReportResponse(BaseModel):
+    success: bool
+    report_created: bool
+    week_year: str
+    message: str
+    report_path: Optional[str] = None
+    s3_key: Optional[str] = None
+    sections: int = 0
+    articles: int = 0
+
+
+class TestNotificationRequest(BaseModel):
+    count: int = 2
+    channel: str = "#research-general"
+    title_prefix: str = "[TEST]"
+
+
+class TestNotificationResult(BaseModel):
+    article_id: str
+    title: str
+    channel: str
+    slack_posted: bool
+    article_stored: bool
+    slack_message_stored: bool
+    message_ts: Optional[str] = None
+    error: Optional[str] = None
+
+
+class TestNotificationResponse(BaseModel):
+    success: bool
+    channel: str
+    requested: int
+    sent: int
+    stored_articles: int
+    stored_messages: int
+    results: List[TestNotificationResult]
 
 
 class PipelineOrchestrator:
@@ -804,113 +856,240 @@ class PipelineOrchestrator:
         """Get week-year string like '2026-W06' for partition key."""
         return get_week_year(dt)
 
-    async def send_weekly_digest(self):
-        """Send weekly digest of positively-rated articles to each project channel."""
-        # Get previous week's week_year
-        today = date.today()
-        last_week = today - timedelta(days=config.pipeline.weekly_digest_lookback_days)
-        week_year = self._get_week_year(last_week)
-        iso_cal = last_week.isocalendar()
+    def _resolve_report_week_year(self, explicit_week_year: Optional[str] = None) -> str:
+        """Resolve the ISO week-year for the weekly feedback report."""
+        if explicit_week_year:
+            return explicit_week_year
+        report_date = date.today() - timedelta(days=config.pipeline.weekly_report_lookback_days)
+        return self._get_week_year(report_date)
 
-        logger.info(f"Generating weekly digest for {week_year}")
+    def _weekly_report_output_path(self, week_year: str) -> Path:
+        report_dir = Path(config.pipeline.weekly_report_output_dir)
+        filename = f"weekly_feedback_report_{week_year}.pdf"
+        return (report_dir / filename).resolve()
+
+    async def generate_weekly_report(self, week_year: Optional[str] = None) -> Dict[str, Any]:
+        """Generate a weekly PDF report from positive Slack feedback."""
+        resolved_week_year = self._resolve_report_week_year(week_year)
+        logger.info(f"Generating weekly feedback report for {resolved_week_year}")
 
         try:
-            # Get positive feedback for the week
-            positive_feedback = db_manager.get_positive_feedback_articles(week_year)
+            positive_feedback = db_manager.get_positive_feedback_articles(resolved_week_year)
             if not positive_feedback:
-                logger.info(f"No positive feedback found for {week_year}")
-                return
+                logger.info(f"No positive feedback found for {resolved_week_year}")
+                return {
+                    "success": True,
+                    "report_created": False,
+                    "week_year": resolved_week_year,
+                    "message": f"No positive feedback found for {resolved_week_year}.",
+                    "report_path": None,
+                    "s3_key": None,
+                    "sections": 0,
+                    "articles": 0,
+                }
 
-            # Get article details from slack messages
-            slack_messages = db_manager.get_slack_messages_for_week(week_year)
-            message_map = {msg["message_ts"]: msg for msg in slack_messages}
+            slack_messages = db_manager.get_slack_messages_for_week(resolved_week_year)
+            sections = build_weekly_report_sections(
+                positive_feedback=positive_feedback,
+                slack_messages=slack_messages,
+                top_n=config.pipeline.weekly_report_top_articles_per_channel,
+            )
 
-            # Group articles by project area
-            area_articles: Dict[str, List[Dict]] = {}
-            seen_articles = set()
+            if not sections:
+                logger.info(f"No reportable Slack message metadata found for {resolved_week_year}")
+                return {
+                    "success": True,
+                    "report_created": False,
+                    "week_year": resolved_week_year,
+                    "message": f"No reportable Slack message metadata found for {resolved_week_year}.",
+                    "report_path": None,
+                    "s3_key": None,
+                    "sections": 0,
+                    "articles": 0,
+                }
 
-            for feedback in positive_feedback:
-                message_ts = feedback.get("message_ts")
-                article_id = str(feedback.get("article_id"))
+            report_path = self._weekly_report_output_path(resolved_week_year)
+            render_weekly_feedback_pdf(
+                output_path=str(report_path),
+                week_year=resolved_week_year,
+                sections=sections,
+                generated_at=datetime.utcnow(),
+            )
 
-                # Skip duplicate articles (multiple positive votes for same article)
-                if article_id in seen_articles:
-                    continue
-                seen_articles.add(article_id)
+            s3_key = None
+            try:
+                with open(report_path, "rb") as pdf_file:
+                    s3_key = s3_manager.upload_weekly_report_pdf(
+                        pdf_content=pdf_file.read(),
+                        week_year=resolved_week_year,
+                        filename=report_path.name,
+                    )
+            except Exception as upload_error:
+                logger.warning(f"Weekly report generated locally but S3 upload failed: {upload_error}")
 
-                msg = message_map.get(message_ts, {})
-                project_area = msg.get("project_area") or "general"
+            article_count = sum(len(section.articles) for section in sections)
+            logger.info(
+                f"Weekly feedback report ready for {resolved_week_year}: "
+                f"{len(sections)} sections, {article_count} articles"
+            )
 
-                if project_area not in area_articles:
-                    area_articles[project_area] = []
-
-                area_articles[project_area].append({
-                    "article_id": article_id,
-                    "title": msg.get("title", "Unknown Title"),
-                    "url": msg.get("url", ""),
-                    "summary": msg.get("summary", ""),
-                    "positive_votes": 1,  # Could aggregate if needed
-                })
-
-            if not area_articles:
-                logger.info(f"No articles with positive feedback for {week_year}")
-                return
-
-            # Send digest to each project channel
-            async with httpx.AsyncClient(timeout=config.pipeline.notification_timeout) as client:
-                for project_area, articles in area_articles.items():
-                    channel = config.slack.channels.get(project_area, "#research-general")
-
-                    # Format digest message
-                    blocks = self._format_weekly_digest(articles, week_year, project_area)
-                    text = f"Weekly Digest: {len(articles)} top-rated articles"
-
-                    try:
-                        response = await client.post(
-                            f"{NOTIFICATION_URL}/notify/article",
-                            json={
-                                "article": {
-                                    "article_id": "digest",
-                                    "url": "",
-                                    "title": text,
-                                    "summary": "",
-                                    "source_id": "digest",
-                                },
-                                "channel": channel,
-                            },
-                            timeout=config.pipeline.slack_api_timeout,
-                        )
-
-                        # Actually post the digest blocks directly via Slack
-                        bot_token = os.getenv("SLACK_BOT_TOKEN")
-                        if bot_token:
-                            slack_response = await client.post(
-                                "https://slack.com/api/chat.postMessage",
-                                headers={"Authorization": f"Bearer {bot_token}", "Content-Type": "application/json"},
-                                json={"channel": channel, "blocks": blocks, "text": text, "unfurl_links": False},
-                                timeout=config.pipeline.slack_api_timeout,
-                            )
-                            result = slack_response.json()
-
-                            if result.get("ok"):
-                                # Store digest record
-                                db_manager.insert_weekly_digest(
-                                    year=iso_cal[0],
-                                    week_number=iso_cal[1],
-                                    project_area=project_area,
-                                    channel=channel,
-                                    articles_count=len(articles),
-                                    message_ts=result.get("ts"),
-                                )
-                                logger.info(f"Sent weekly digest to {channel}: {len(articles)} articles")
-                            else:
-                                logger.error(f"Failed to send digest to {channel}: {result.get('error')}")
-
-                    except Exception as e:
-                        logger.error(f"Failed to send digest to {project_area}: {e}")
-
+            return {
+                "success": True,
+                "report_created": True,
+                "week_year": resolved_week_year,
+                "message": "Weekly feedback report generated successfully.",
+                "report_path": str(report_path),
+                "s3_key": s3_key,
+                "sections": len(sections),
+                "articles": article_count,
+            }
         except Exception as e:
-            logger.error(f"Weekly digest failed: {e}")
+            logger.error(f"Weekly feedback report failed for {resolved_week_year}: {e}")
+            return {
+                "success": False,
+                "report_created": False,
+                "week_year": resolved_week_year,
+                "message": f"Weekly feedback report failed: {e}",
+                "report_path": None,
+                "s3_key": None,
+                "sections": 0,
+                "articles": 0,
+            }
+
+    def _build_dummy_test_articles(self, count: int, title_prefix: str) -> List[Article]:
+        """Build dummy articles for manual Slack notification testing."""
+        safe_count = max(1, min(count, 5))
+        batch_id = datetime.utcnow().strftime("%Y%m%d%H%M%S")
+        articles: List[Article] = []
+
+        for index in range(safe_count):
+            ordinal = index + 1
+            article_id = str(uuid.uuid4())
+            articles.append(
+                Article(
+                    article_id=article_id,
+                    source_id="test_notification",
+                    source_name="Manual Notification Test",
+                    url=f"https://example.com/testing/slack-feedback/{batch_id}/{ordinal}",
+                    title=f"{title_prefix} Feedback Button Test {ordinal} ({batch_id})",
+                    abstract="Dummy abstract for manual Slack notification testing.",
+                    full_text="Dummy full text for manual Slack notification testing.",
+                    published_date=date.today(),
+                    project_area=ProjectArea.GENERAL,
+                    relevance_score=100.0,
+                    evidence_level=4,
+                    summary=(
+                        "This is a dummy article sent to validate Slack delivery, "
+                        "feedback buttons, and ScyllaDB storage."
+                    ),
+                    key_findings=[
+                        "Dummy notification reached Slack",
+                        "Feedback buttons can be clicked",
+                    ],
+                    preventive_implications="Testing only; not a real article.",
+                    status=ArticleStatus.PROCESSED,
+                    processed_at=datetime.utcnow(),
+                )
+            )
+
+        return articles
+
+    async def send_dummy_articles_for_notification_test(
+        self,
+        count: int = 2,
+        channel: str = "#research-general",
+        title_prefix: str = "[TEST]",
+    ) -> Dict[str, Any]:
+        """Post dummy articles to Slack and verify article/slack-message persistence."""
+        articles = self._build_dummy_test_articles(count=count, title_prefix=title_prefix)
+        results: List[Dict[str, Any]] = []
+
+        async with httpx.AsyncClient(timeout=config.pipeline.notification_timeout) as client:
+            for article in articles:
+                article_stored = False
+                slack_message_stored = False
+                slack_posted = False
+                message_ts = None
+                error_message = None
+
+                try:
+                    db_manager.insert_article(article.model_dump())
+                    stored_rows = db_manager.get_articles_by_date(
+                        source_id=article.source_id,
+                        published_date=article.published_date,
+                        limit=100,
+                    )
+                    article_stored = any(str(row.get("article_id")) == article.article_id for row in stored_rows)
+
+                    response = await client.post(
+                        f"{NOTIFICATION_URL}/notify/article",
+                        json={
+                            "article": article.model_dump(mode="json"),
+                            "channel": channel,
+                        },
+                    )
+                    response.raise_for_status()
+                    payload = response.json()
+
+                    slack_posted = bool(payload.get("success"))
+                    message_ts = payload.get("message_ts")
+                    if not slack_posted:
+                        error_message = payload.get("error") or "Slack notification failed"
+                    else:
+                        db_manager.update_article_status(
+                            source_id=article.source_id,
+                            published_date=article.published_date,
+                            article_id=article.article_id,
+                            status="notified",
+                        )
+                        if message_ts:
+                            week_year = get_week_year_from_message_ts(message_ts)
+                            db_manager.insert_slack_message(
+                                week_year=week_year,
+                                message_ts=message_ts,
+                                channel=channel,
+                                article_id=article.article_id,
+                                source_id=article.source_id,
+                                published_date=article.published_date,
+                                project_area=article.project_area or "",
+                                title=article.title or "",
+                                url=article.url or "",
+                                summary=article.summary or "",
+                            )
+                            slack_message_stored = db_manager.get_slack_message(week_year, message_ts) is not None
+                except Exception as exc:
+                    error_message = str(exc)
+
+                results.append(
+                    {
+                        "article_id": article.article_id,
+                        "title": article.title,
+                        "channel": channel,
+                        "slack_posted": slack_posted,
+                        "article_stored": article_stored,
+                        "slack_message_stored": slack_message_stored,
+                        "message_ts": message_ts,
+                        "error": error_message,
+                    }
+                )
+
+        sent = sum(1 for result in results if result["slack_posted"])
+        stored_articles = sum(1 for result in results if result["article_stored"])
+        stored_messages = sum(1 for result in results if result["slack_message_stored"])
+
+        return {
+            "success": sent == len(results) and stored_articles == len(results) and stored_messages == len(results),
+            "channel": channel,
+            "requested": len(results),
+            "sent": sent,
+            "stored_articles": stored_articles,
+            "stored_messages": stored_messages,
+            "results": results,
+        }
+
+    async def send_weekly_digest(self):
+        """Backward-compatible wrapper for the weekly report trigger."""
+        return await self.generate_weekly_report()
 
     def _format_weekly_digest(self, articles: List[Dict], week_year: str, project_area: str) -> List[Dict]:
         """Format weekly digest as Slack blocks."""
@@ -976,10 +1155,17 @@ def setup_scheduler():
         scheduler.add_job(scheduled_notification_run, notif_trigger, id="notification_run", replace_existing=True)
         logger.info(f"Scheduled notification run: hours={config.pipeline.notification_cron_hours}, minutes={config.pipeline.notification_cron_minutes}, Mon-Fri")
 
-        # Weekly digest
-        digest_trigger = CronTrigger(minute=config.pipeline.digest_minute, hour=config.pipeline.digest_hour, day_of_week=config.pipeline.digest_day_of_week)
-        scheduler.add_job(scheduled_weekly_digest, digest_trigger, id="weekly_digest", replace_existing=True)
-        logger.info(f"Scheduled weekly digest: {config.pipeline.digest_day_of_week} {config.pipeline.digest_hour}:{config.pipeline.digest_minute:02d} UTC")
+        # Weekly feedback PDF report: Monday 10:00 AM IST (4:30 AM UTC)
+        weekly_report_trigger = CronTrigger(
+            minute=config.pipeline.weekly_report_minute,
+            hour=config.pipeline.weekly_report_hour,
+            day_of_week=config.pipeline.weekly_report_day_of_week,
+        )
+        scheduler.add_job(scheduled_weekly_report, weekly_report_trigger, id="weekly_report", replace_existing=True)
+        logger.info(
+            f"Scheduled weekly report: {config.pipeline.weekly_report_day_of_week} "
+            f"{config.pipeline.weekly_report_hour}:{config.pipeline.weekly_report_minute:02d} UTC"
+        )
     except Exception as e:
         logger.error(f"Scheduler setup failed: {e}")
 
@@ -1008,9 +1194,14 @@ async def scheduled_run():
     await orchestrator.run_pipeline()
 
 
+async def scheduled_weekly_report():
+    logger.info("Starting scheduled weekly report")
+    await orchestrator.generate_weekly_report()
+
+
 async def scheduled_weekly_digest():
-    logger.info("Starting scheduled weekly digest")
-    await orchestrator.send_weekly_digest()
+    """Backward-compatible alias for older scheduler references."""
+    await scheduled_weekly_report()
 
 
 @app.post("/pipeline/run", response_model=PipelineResponse)
@@ -1042,11 +1233,32 @@ async def get_run_status(run_id: str):
     return run.model_dump()
 
 
-@app.post("/pipeline/weekly-digest")
-async def trigger_weekly_digest(background_tasks: BackgroundTasks):
-    """Manually trigger the weekly digest."""
-    background_tasks.add_task(orchestrator.send_weekly_digest)
-    return {"status": "started", "message": "Weekly digest generation initiated"}
+@app.post("/pipeline/weekly-report", response_model=WeeklyReportResponse)
+async def trigger_weekly_report(request: Optional[WeeklyReportRequest] = None):
+    """Generate the weekly feedback PDF report immediately."""
+    request = request or WeeklyReportRequest()
+    result = await orchestrator.generate_weekly_report(request.week_year)
+    return WeeklyReportResponse(**result)
+
+
+@app.post("/pipeline/weekly-digest", response_model=WeeklyReportResponse)
+async def trigger_weekly_digest(request: Optional[WeeklyReportRequest] = None):
+    """Backward-compatible alias for the weekly report endpoint."""
+    request = request or WeeklyReportRequest()
+    result = await orchestrator.generate_weekly_report(request.week_year)
+    return WeeklyReportResponse(**result)
+
+
+@app.post("/pipeline/test-notification", response_model=TestNotificationResponse)
+async def trigger_test_notification(request: Optional[TestNotificationRequest] = None):
+    """Send dummy articles to Slack and verify they were stored in ScyllaDB."""
+    request = request or TestNotificationRequest()
+    result = await orchestrator.send_dummy_articles_for_notification_test(
+        count=request.count,
+        channel=request.channel,
+        title_prefix=request.title_prefix,
+    )
+    return TestNotificationResponse(**result)
 
 
 @app.get("/health")

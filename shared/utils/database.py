@@ -973,3 +973,27 @@ class S3Manager:
             self.upload_article_fulltext(article_id, domain, full_text, published_date)
 
         self.upload_article_json(article_dict, published_date)
+
+    def upload_weekly_report_pdf(
+        self,
+        pdf_content: bytes,
+        week_year: str,
+        filename: str,
+    ) -> Optional[str]:
+        """Upload a weekly report PDF to S3 and return the object key."""
+        if not self.client:
+            return None
+
+        try:
+            key = f"governance/pipeline/reports/weekly/{week_year}/{filename}"
+            self.client.put_object(
+                Bucket=self.bucket,
+                Key=key,
+                Body=pdf_content,
+                ContentType="application/pdf",
+            )
+            logger.info(f"Uploaded weekly report PDF to s3://{self.bucket}/{key}")
+            return key
+        except Exception as e:
+            logger.error(f"Failed to upload weekly report PDF to S3: {e}")
+            return None

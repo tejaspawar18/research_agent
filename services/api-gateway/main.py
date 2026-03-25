@@ -73,6 +73,21 @@ async def run_status(run_id: str):
     return await proxy("GET", f"{ORCHESTRATOR_URL}/pipeline/status/{run_id}")
 
 
+@app.post("/api/pipeline/weekly-report")
+async def weekly_report(request: dict = None):
+    return await proxy("POST", f"{ORCHESTRATOR_URL}/pipeline/weekly-report", request or {})
+
+
+@app.post("/api/pipeline/weekly-digest")
+async def weekly_digest(request: dict = None):
+    return await proxy("POST", f"{ORCHESTRATOR_URL}/pipeline/weekly-digest", request or {})
+
+
+@app.post("/api/pipeline/test-notification")
+async def test_notification(request: dict = None):
+    return await proxy("POST", f"{ORCHESTRATOR_URL}/pipeline/test-notification", request or {})
+
+
 # Crawler endpoints
 @app.get("/api/sources")
 async def list_sources():

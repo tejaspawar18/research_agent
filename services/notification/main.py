@@ -423,6 +423,34 @@ class MessageFormatter:
         #     ],
         # })
 
+        button_value = f"{article.article_id}|{article.source_id}|{article.published_date or ''}"
+        blocks.append({"type": "divider"})
+        blocks.append({
+            "type": "actions",
+            "block_id": f"feedback_{article.article_id}",
+            "elements": [
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": "Useful", "emoji": True},
+                    "style": "primary",
+                    "action_id": "feedback_positive",
+                    "value": button_value,
+                },
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": "Not Useful", "emoji": True},
+                    "action_id": "feedback_negative",
+                    "value": button_value,
+                },
+                {
+                    "type": "button",
+                    "text": {"type": "plain_text", "text": "Comment", "emoji": True},
+                    "action_id": "feedback_comment",
+                    "value": button_value,
+                },
+            ],
+        })
+
         return blocks, title
     
     @staticmethod
@@ -651,11 +679,8 @@ async def slack_interactions(request: Request):
                 except Exception as e:
                     logger.error(f"Failed to store feedback: {e}")
 
-                # Update the message to show feedback received
-                return JSONResponse(content={
-                    "response_action": "update",
-                    "text": f"Thanks for your feedback! ({feedback_type})",
-                })
+                # Keep the original article message intact so the buttons remain available.
+                return JSONResponse(content={})
 
     # Handle modal submissions
     elif payload_type == "view_submission":

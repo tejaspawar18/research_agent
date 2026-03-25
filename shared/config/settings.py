@@ -110,6 +110,11 @@ class PipelineConfig(BaseModel):
     weekly_digest_lookback_days: int = 7      # Days to look back for weekly digest
     digest_max_articles: int = 10             # Max articles in digest display
 
+    # Weekly report settings
+    weekly_report_lookback_days: int = 7
+    weekly_report_top_articles_per_channel: int = 5
+    weekly_report_output_dir: str = "data/weekly_reports"
+
     # Schedule settings (UTC times)
     pipeline_morning_hour: int = 2            # 8 AM IST = 2:30 AM UTC
     pipeline_morning_minute: int = 30
@@ -120,6 +125,9 @@ class PipelineConfig(BaseModel):
     digest_hour: int = 3                      # Weekly digest hour (UTC)
     digest_minute: int = 30                   # Weekly digest minute (UTC)
     digest_day_of_week: str = "mon"           # Weekly digest day
+    weekly_report_hour: int = 4               # Monday 10:00 AM IST = 4:30 AM UTC
+    weekly_report_minute: int = 30
+    weekly_report_day_of_week: str = "mon"
 
     # Worker settings
     extraction_worker_batch_size: int = 50

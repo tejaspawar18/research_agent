@@ -42,6 +42,14 @@ from .metrics import (
     PIPELINE_STAGE_ARTICLES,
     PIPELINE_DURATION,
 )
+from .weekly_report import (
+    WeeklyReportArticle,
+    WeeklyReportSection,
+    build_weekly_report_sections,
+    project_area_label,
+    render_weekly_feedback_pdf,
+    week_year_bounds,
+)
 
 __all__ = [
     # Database
@@ -86,4 +94,12 @@ __all__ = [
     "PIPELINE_RUNS",
     "PIPELINE_STAGE_ARTICLES",
     "PIPELINE_DURATION",
+
+    # Weekly report helpers
+    "WeeklyReportArticle",
+    "WeeklyReportSection",
+    "build_weekly_report_sections",
+    "project_area_label",
+    "render_weekly_feedback_pdf",
+    "week_year_bounds",
 ]

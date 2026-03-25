@@ -15,3 +15,11 @@ parallel_crawlers: 5
 dedup_similarity_threshold: 0.80
 min_sample_size_observational: 150
 min_sample_size_rct: 50
+
+# Weekly feedback PDF report
+weekly_report_lookback_days: 7
+weekly_report_top_articles_per_channel: 5
+weekly_report_output_dir: "data/weekly_reports"
+weekly_report_hour: 4        # Monday 10:00 AM IST
+weekly_report_minute: 30
+weekly_report_day_of_week: "mon"

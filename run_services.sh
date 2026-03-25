@@ -13,6 +13,8 @@
 #   ./run_services.sh --build          # Rebuild and start all services
 #   ./run_services.sh --trigger-pipeline  # Trigger a manual pipeline run
 #   ./run_services.sh --trigger-notify    # Trigger notification-only run
+#   ./run_services.sh --trigger-weekly-report  # Trigger weekly PDF report generation
+#   ./run_services.sh --trigger-test-notification  # Send dummy Slack test articles and verify DB storage
 # ============================================================
 
 set -euo pipefail
@@ -267,6 +269,54 @@ cmd_trigger_notify() {
     echo "$response" | python3 -m json.tool 2>/dev/null || echo "$response"
 }
 
+cmd_trigger_weekly_report() {
+    log_header "Triggering Weekly Feedback Report"
+
+    local orchestrator_port="${SERVICE_PORTS["orchestrator"]}"
+    local url="http://localhost:${orchestrator_port}/pipeline/weekly-report"
+
+    log_info "Generating the weekly top-articles PDF report..."
+    log_info "This testing flow only saves the PDF report and does not post anything to Slack."
+
+    response=$(curl -s -X POST "$url" \
+        -H "Content-Type: application/json" \
+        -d '{}' \
+        --connect-timeout 10 \
+        --max-time 120 \
+        2>/dev/null) || {
+        log_error "Failed to reach orchestrator at $url"
+        log_info "Make sure services are running: ./run_services.sh --status"
+        exit 1
+    }
+
+    log_success "Weekly report request completed!"
+    echo "$response" | python3 -m json.tool 2>/dev/null || echo "$response"
+}
+
+cmd_trigger_test_notification() {
+    log_header "Triggering Dummy Notification Test"
+
+    local orchestrator_port="${SERVICE_PORTS["orchestrator"]}"
+    local url="http://localhost:${orchestrator_port}/pipeline/test-notification"
+
+    log_info "Sending dummy articles to #research-general for end-to-end testing..."
+    log_info "This will post test messages to Slack and verify article/slack_message rows in ScyllaDB."
+
+    response=$(curl -s -X POST "$url" \
+        -H "Content-Type: application/json" \
+        -d '{"count": 2, "channel": "#research-general", "title_prefix": "[TEST]"}' \
+        --connect-timeout 10 \
+        --max-time 120 \
+        2>/dev/null) || {
+        log_error "Failed to reach orchestrator at $url"
+        log_info "Make sure services are running: ./run_services.sh --status"
+        exit 1
+    }
+
+    log_success "Dummy notification test completed!"
+    echo "$response" | python3 -m json.tool 2>/dev/null || echo "$response"
+}
+
 usage() {
     echo -e "${CYAN}Preventive Health Research Pipeline - Service Manager${NC}"
     echo ""
@@ -284,6 +334,8 @@ usage() {
     echo "  --trigger-pipeline    Trigger a full pipeline run via orchestrator"
     echo "  --trigger-crawl       Trigger a crawl run via crawler service"
     echo "  --trigger-notify      Trigger notification-only run (skip crawl/extraction/llm)"
+    echo "  --trigger-weekly-report Trigger the weekly PDF report"
+    echo "  --trigger-test-notification Send dummy articles to #research-general and verify DB storage"
     echo "  --help                Show this help message"
     echo ""
     echo "Options:"
@@ -300,6 +352,8 @@ usage() {
     echo "  $0 --logs crawler                     # Tail crawler logs"
     echo "  $0 --trigger-pipeline                 # Trigger manual pipeline run"
     echo "  $0 --trigger-notify                   # Trigger notification-only run"
+    echo "  $0 --trigger-weekly-report            # Generate the weekly feedback PDF report"
+    echo "  $0 --trigger-test-notification        # Post dummy Slack articles and verify ScyllaDB storage"
     echo "  $0 --stop                             # Stop everything"
 }
 
@@ -376,6 +430,14 @@ main() {
                 command="trigger-notify"
                 shift
                 ;;
+            --trigger-weekly-report)
+                command="trigger-weekly-report"
+                shift
+                ;;
+            --trigger-test-notification)
+                command="trigger-test-notification"
+                shift
+                ;;
             --help|-h)
                 usage
                 exit 0
@@ -415,6 +477,12 @@ main() {
             ;;
         trigger-notify)
             cmd_trigger_notify
+            ;;
+        trigger-weekly-report)
+            cmd_trigger_weekly_report
+            ;;
+        trigger-test-notification)
+            cmd_trigger_test_notification
             ;;
     esac
 }
