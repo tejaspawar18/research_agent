@@ -376,7 +376,7 @@ def render_weekly_feedback_pdf(
         if sections:
             story.extend([Spacer(1, 8), HRFlowable(width="100%", color=colors.HexColor("#cbd5e1")), Spacer(1, 10)])
 
-        story.append(Paragraph("Top Feedback Users", section_heading_style))
+        story.append(Paragraph("Top Contributors to the Report", section_heading_style))
         table_rows = [["Rank", "User", "Feedback Count"]]
         for rank, user in enumerate(top_feedback_users, start=1):
             table_rows.append([str(rank), _format_user_display_name(user), str(user.feedback_count)])
