@@ -146,17 +146,27 @@ class SlackFeedbackIngestor:
             logger.warning(f"Failed to stop Slack Socket Mode listener: {exc}")
 
     async def _handle_socket_request(self, client: Any, req: Any):
-        """Handle Socket Mode events and acknowledge them immediately."""
+        """Handle Socket Mode events and interactive payloads."""
+        response_payload = None
+
+        try:
+            if req.type == "events_api":
+                await self.handle_events_payload(req.payload)
+            elif req.type == "interactive":
+                response_payload = await handle_interaction_payload(req.payload)
+            else:
+                logger.debug(f"Ignoring unsupported Slack Socket Mode request type: {req.type}")
+        except Exception as exc:
+            logger.warning(f"Failed to process Slack Socket Mode request {getattr(req, 'type', 'unknown')}: {exc}")
+
         try:
             from slack_sdk.socket_mode.response import SocketModeResponse
 
-            await client.send_socket_mode_response(SocketModeResponse(envelope_id=req.envelope_id))
+            await client.send_socket_mode_response(
+                SocketModeResponse(envelope_id=req.envelope_id, payload=response_payload)
+            )
         except Exception as exc:
             logger.warning(f"Failed to acknowledge Slack Socket Mode request: {exc}")
-            return
-
-        if req.type == "events_api":
-            await self.handle_events_payload(req.payload)
 
     async def handle_events_payload(self, payload: Dict[str, Any]):
         """Handle a Slack Events API payload."""
@@ -599,29 +609,10 @@ async def slack_events(request: Request):
     return JSONResponse(content={"ok": True})
 
 
-@app.post("/slack/interactions")
-async def slack_interactions(request: Request):
-    """Handle Slack interactive component callbacks (button clicks, modal submissions)."""
-    body = await request.body()
-
-    # Verify Slack signature
-    timestamp = request.headers.get("X-Slack-Request-Timestamp", "")
-    signature = request.headers.get("X-Slack-Signature", "")
-
-    if not verify_slack_signature(timestamp, body, signature):
-        raise HTTPException(status_code=401, detail="Invalid signature")
-
-    # Parse the payload
-    try:
-        parsed = urllib.parse.parse_qs(body.decode("utf-8"))
-        payload = json.loads(parsed.get("payload", ["{}"])[0])
-    except Exception as e:
-        logger.error(f"Failed to parse Slack payload: {e}")
-        raise HTTPException(status_code=400, detail="Invalid payload")
-
+async def handle_interaction_payload(payload: Dict[str, Any]) -> Dict[str, Any]:
+    """Handle Slack interactive component payloads from HTTP or Socket Mode."""
     payload_type = payload.get("type")
 
-    # Handle button clicks
     if payload_type == "block_actions":
         actions = payload.get("actions", [])
         user = payload.get("user", {})
@@ -633,23 +624,27 @@ async def slack_interactions(request: Request):
             value = action.get("value", "")
 
             if action_id.startswith("feedback_"):
-                # Parse button value: article_id|source_id|published_date
                 parts = value.split("|")
                 if len(parts) != 3:
                     logger.error(f"Invalid button value format: {value}")
                     continue
 
                 article_id, source_id, published_date_str = parts
-                feedback_type = action_id.replace("feedback_", "")  # positive, negative, comment
+                feedback_type = action_id.replace("feedback_", "")
 
                 if feedback_type == "comment":
-                    # Open modal for comment input
                     trigger_id = payload.get("trigger_id")
                     if trigger_id:
-                        await open_comment_modal(trigger_id, article_id, source_id, published_date_str, message.get("ts", ""), channel.get("id", ""))
-                    return JSONResponse(content={})
+                        await open_comment_modal(
+                            trigger_id,
+                            article_id,
+                            source_id,
+                            published_date_str,
+                            message.get("ts", ""),
+                            channel.get("id", ""),
+                        )
+                    return {}
 
-                # Store feedback in ScyllaDB
                 message_ts = message.get("ts", "")
                 channel_id = channel.get("id", "")
                 user_id = user.get("id", "")
@@ -679,26 +674,22 @@ async def slack_interactions(request: Request):
                 except Exception as e:
                     logger.error(f"Failed to store feedback: {e}")
 
-                # Keep the original article message intact so the buttons remain available.
-                return JSONResponse(content={})
+                return {}
 
-    # Handle modal submissions
     elif payload_type == "view_submission":
         view = payload.get("view", {})
         callback_id = view.get("callback_id", "")
 
         if callback_id.startswith("comment_modal_"):
-            # Parse metadata from callback_id: comment_modal_articleId_sourceId_publishedDate_messageTs_channel
             metadata = view.get("private_metadata", "")
             parts = metadata.split("|")
 
             if len(parts) != 5:
                 logger.error(f"Invalid comment modal metadata: {metadata}")
-                return JSONResponse(content={"response_action": "clear"})
+                return {"response_action": "clear"}
 
             article_id, source_id, published_date_str, message_ts, channel_id = parts
 
-            # Get comment text from modal
             values = view.get("state", {}).get("values", {})
             comment_text = ""
             for block_id, block_values in values.items():
@@ -733,9 +724,32 @@ async def slack_interactions(request: Request):
             except Exception as e:
                 logger.error(f"Failed to store comment: {e}")
 
-            return JSONResponse(content={"response_action": "clear"})
+            return {"response_action": "clear"}
 
-    return JSONResponse(content={})
+    return {}
+
+
+@app.post("/slack/interactions")
+async def slack_interactions(request: Request):
+    """Handle Slack interactive component callbacks (button clicks, modal submissions)."""
+    body = await request.body()
+
+    # Verify Slack signature
+    timestamp = request.headers.get("X-Slack-Request-Timestamp", "")
+    signature = request.headers.get("X-Slack-Signature", "")
+
+    if not verify_slack_signature(timestamp, body, signature):
+        raise HTTPException(status_code=401, detail="Invalid signature")
+
+    # Parse the payload
+    try:
+        parsed = urllib.parse.parse_qs(body.decode("utf-8"))
+        payload = json.loads(parsed.get("payload", ["{}"])[0])
+    except Exception as e:
+        logger.error(f"Failed to parse Slack payload: {e}")
+        raise HTTPException(status_code=400, detail="Invalid payload")
+
+    return JSONResponse(content=await handle_interaction_payload(payload))
 
 
 async def open_comment_modal(trigger_id: str, article_id: str, source_id: str, published_date: str, message_ts: str, channel: str):
