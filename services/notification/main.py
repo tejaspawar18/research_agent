@@ -100,19 +100,24 @@ class SlackFeedbackIngestor:
         self.app_token = config.settings.slack_app_token or os.getenv("SLACK_APP_TOKEN", "")
         self.socket_client = None
         self.socket_mode_enabled = False
+        self.socket_mode_error: Optional[str] = None
         self.user_cache: Dict[str, str] = {}
 
     async def start(self):
         """Start Slack Socket Mode listener when tokens are available."""
         if not self.bot_token or not self.app_token:
+            self.socket_mode_enabled = False
+            self.socket_mode_error = "Missing SLACK_BOT_TOKEN or SLACK_APP_TOKEN"
             logger.info("Slack Socket Mode disabled: bot token or app token missing")
             return
 
         try:
             from slack_sdk.socket_mode.aiohttp import SocketModeClient
             from slack_sdk.web.async_client import AsyncWebClient
-        except ImportError:
-            logger.warning("slack-sdk not installed; Slack Socket Mode feedback listener disabled")
+        except ImportError as exc:
+            self.socket_mode_enabled = False
+            self.socket_mode_error = f"Dependency import failed: {exc}"
+            logger.warning(f"Slack Socket Mode dependency import failed: {exc}")
             return
 
         try:
@@ -123,10 +128,12 @@ class SlackFeedbackIngestor:
             self.socket_client.socket_mode_request_listeners.append(self._handle_socket_request)
             await self.socket_client.connect()
             self.socket_mode_enabled = True
+            self.socket_mode_error = None
             logger.info("Slack Socket Mode feedback listener connected")
         except Exception as exc:
             self.socket_client = None
             self.socket_mode_enabled = False
+            self.socket_mode_error = str(exc)
             logger.warning(f"Failed to start Slack Socket Mode listener: {exc}")
 
     async def stop(self):
@@ -564,6 +571,7 @@ async def health():
         "slack_configured": bool(config.settings.slack_bot_token),
         "slack_app_configured": bool(config.settings.slack_app_token),
         "slack_socket_mode": feedback_ingestor.socket_mode_enabled,
+        "slack_socket_mode_error": feedback_ingestor.socket_mode_error,
     }
 
 

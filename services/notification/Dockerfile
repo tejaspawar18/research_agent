@@ -8,7 +8,8 @@ WORKDIR /app
 
 COPY shared/ /app/shared/
 COPY services/notification/requirements.txt /app/
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -r requirements.txt && \
+    python -c "import slack_sdk, aiohttp"
 
 COPY services/notification/*.py /app/
 
