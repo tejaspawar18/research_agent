@@ -276,7 +276,7 @@ cmd_trigger_weekly_report() {
     local url="http://localhost:${orchestrator_port}/pipeline/weekly-report"
 
     log_info "Generating the weekly top-articles PDF report..."
-    log_info "This testing flow only saves the PDF report and does not post anything to Slack."
+    log_info "The report will be delivered to all configured Slack channels."
 
     response=$(curl -s -X POST "$url" \
         -H "Content-Type: application/json" \

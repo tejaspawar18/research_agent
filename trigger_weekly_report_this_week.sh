@@ -15,7 +15,7 @@ echo "Endpoint: ${REPORT_URL}"
 
 response=$(curl -s -X POST "$REPORT_URL" \
   -H "Content-Type: application/json" \
-  -d "{\"week_year\":\"${WEEK_YEAR}\"}" \
+  -d "{\"week_year\":\"${WEEK_YEAR}\",\"send_to_slack\":true}" \
   --connect-timeout 10 \
   --max-time 180 \
   2>/dev/null) || {

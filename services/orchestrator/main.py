@@ -15,7 +15,7 @@ import json
 IST = timezone(timedelta(hours=5, minutes=30))
 
 from fastapi import FastAPI, HTTPException, BackgroundTasks
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 import httpx
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -95,6 +95,7 @@ class PipelineResponse(BaseModel):
 
 class WeeklyReportRequest(BaseModel):
     week_year: Optional[str] = None
+    send_to_slack: bool = True
 
 
 class WeeklyReportResponse(BaseModel):
@@ -106,6 +107,9 @@ class WeeklyReportResponse(BaseModel):
     s3_key: Optional[str] = None
     sections: int = 0
     articles: int = 0
+    channels_targeted: int = 0
+    channels_sent: int = 0
+    failed_channels: List[str] = Field(default_factory=list)
 
 
 class TestNotificationRequest(BaseModel):
@@ -869,7 +873,94 @@ class PipelineOrchestrator:
         filename = f"weekly_feedback_report_{week_year}.pdf"
         return (report_dir / filename).resolve()
 
-    async def generate_weekly_report(self, week_year: Optional[str] = None) -> Dict[str, Any]:
+    def _weekly_report_channels(self) -> List[str]:
+        """Return unique configured Slack channels for weekly report delivery."""
+        channels: List[str] = []
+        seen = set()
+
+        for channel in (config.slack.channels or {}).values():
+            normalized = str(channel or "").strip()
+            if not normalized or normalized in seen:
+                continue
+            seen.add(normalized)
+            channels.append(normalized)
+
+        return channels
+
+    async def _send_weekly_report_to_channels(
+        self,
+        report_path: Path,
+        week_year: str,
+        section_count: int,
+        article_count: int,
+    ) -> Dict[str, Any]:
+        """Upload the weekly report PDF to all configured Slack channels."""
+        channels = self._weekly_report_channels()
+        if not channels:
+            logger.info("Weekly report Slack delivery skipped: no configured channels")
+            return {"channels_targeted": 0, "channels_sent": 0, "failed_channels": []}
+
+        bot_token = config.settings.slack_bot_token or os.getenv("SLACK_BOT_TOKEN")
+        if not bot_token:
+            logger.warning("Weekly report Slack delivery skipped: SLACK_BOT_TOKEN is missing")
+            return {
+                "channels_targeted": len(channels),
+                "channels_sent": 0,
+                "failed_channels": channels,
+            }
+
+        try:
+            report_bytes = report_path.read_bytes()
+        except Exception as exc:
+            logger.warning(f"Weekly report Slack delivery skipped: unable to read report file: {exc}")
+            return {
+                "channels_targeted": len(channels),
+                "channels_sent": 0,
+                "failed_channels": channels,
+            }
+
+        title = f"Weekly Feedback Report {week_year}"
+        initial_comment = (
+            f"Weekly feedback report for *{week_year}* is ready. "
+            f"Sections: {section_count}, Articles: {article_count}."
+        )
+
+        sent_channels: List[str] = []
+        failed_channels: List[str] = []
+
+        async with httpx.AsyncClient() as client:
+            for channel in channels:
+                try:
+                    response = await client.post(
+                        "https://slack.com/api/files.upload",
+                        headers={"Authorization": f"Bearer {bot_token}"},
+                        data={
+                            "channels": channel,
+                            "filename": report_path.name,
+                            "title": title,
+                            "initial_comment": initial_comment,
+                        },
+                        files={"file": (report_path.name, report_bytes, "application/pdf")},
+                        timeout=config.pipeline.slack_api_timeout,
+                    )
+                    result = response.json()
+                    if result.get("ok"):
+                        sent_channels.append(channel)
+                    else:
+                        error = result.get("error", "unknown_error")
+                        failed_channels.append(channel)
+                        logger.warning(f"Weekly report Slack upload failed for {channel}: {error}")
+                except Exception as exc:
+                    failed_channels.append(channel)
+                    logger.warning(f"Weekly report Slack upload failed for {channel}: {exc}")
+
+        return {
+            "channels_targeted": len(channels),
+            "channels_sent": len(sent_channels),
+            "failed_channels": failed_channels,
+        }
+
+    async def generate_weekly_report(self, week_year: Optional[str] = None, send_to_slack: bool = True) -> Dict[str, Any]:
         """Generate a weekly PDF report from positive Slack feedback."""
         resolved_week_year = self._resolve_report_week_year(week_year)
         logger.info(f"Generating weekly feedback report for {resolved_week_year}")
@@ -891,6 +982,9 @@ class PipelineOrchestrator:
                     "s3_key": None,
                     "sections": 0,
                     "articles": 0,
+                    "channels_targeted": 0,
+                    "channels_sent": 0,
+                    "failed_channels": [],
                 }
 
             slack_messages = db_manager.get_slack_messages_for_week(resolved_week_year)
@@ -915,6 +1009,9 @@ class PipelineOrchestrator:
                     "s3_key": None,
                     "sections": 0,
                     "articles": 0,
+                    "channels_targeted": 0,
+                    "channels_sent": 0,
+                    "failed_channels": [],
                 }
 
             report_path = self._weekly_report_output_path(resolved_week_year)
@@ -938,6 +1035,19 @@ class PipelineOrchestrator:
                 logger.warning(f"Weekly report generated locally but S3 upload failed: {upload_error}")
 
             article_count = sum(len(section.articles) for section in sections)
+            slack_delivery = {
+                "channels_targeted": 0,
+                "channels_sent": 0,
+                "failed_channels": [],
+            }
+            if send_to_slack:
+                slack_delivery = await self._send_weekly_report_to_channels(
+                    report_path=report_path,
+                    week_year=resolved_week_year,
+                    section_count=len(sections),
+                    article_count=article_count,
+                )
+
             logger.info(
                 f"Weekly feedback report ready for {resolved_week_year}: "
                 f"{len(sections)} sections, {article_count} articles"
@@ -952,6 +1062,9 @@ class PipelineOrchestrator:
                 "s3_key": s3_key,
                 "sections": len(sections),
                 "articles": article_count,
+                "channels_targeted": slack_delivery["channels_targeted"],
+                "channels_sent": slack_delivery["channels_sent"],
+                "failed_channels": slack_delivery["failed_channels"],
             }
         except Exception as e:
             logger.error(f"Weekly feedback report failed for {resolved_week_year}: {e}")
@@ -964,6 +1077,9 @@ class PipelineOrchestrator:
                 "s3_key": None,
                 "sections": 0,
                 "articles": 0,
+                "channels_targeted": 0,
+                "channels_sent": 0,
+                "failed_channels": [],
             }
 
     def _build_dummy_test_articles(self, count: int, title_prefix: str) -> List[Article]:
@@ -1247,7 +1363,7 @@ async def get_run_status(run_id: str):
 async def trigger_weekly_report(request: Optional[WeeklyReportRequest] = None):
     """Generate the weekly feedback PDF report immediately."""
     request = request or WeeklyReportRequest()
-    result = await orchestrator.generate_weekly_report(request.week_year)
+    result = await orchestrator.generate_weekly_report(request.week_year, request.send_to_slack)
     return WeeklyReportResponse(**result)
 
 
@@ -1255,7 +1371,7 @@ async def trigger_weekly_report(request: Optional[WeeklyReportRequest] = None):
 async def trigger_weekly_digest(request: Optional[WeeklyReportRequest] = None):
     """Backward-compatible alias for the weekly report endpoint."""
     request = request or WeeklyReportRequest()
-    result = await orchestrator.generate_weekly_report(request.week_year)
+    result = await orchestrator.generate_weekly_report(request.week_year, request.send_to_slack)
     return WeeklyReportResponse(**result)
 
 
